@@ -19,8 +19,8 @@ run-ai *args:
 
 test:
     @mkdir -p .tmp
-    go test -race -coverprofile=.tmp/coverage.out ./...
-    @awk 'NR > 1 { total += $(NF-1); if ($NF > 0) covered += $(NF-1) } END { coverage = 100 * covered / total; printf "Coverage: %.2f%%\n", coverage; exit(coverage < 90) }' .tmp/coverage.out
+    go test -race -coverpkg="$(go list ./... | awk '!/\/internal\/scratch$/' | paste -sd, -)" -coverprofile=.tmp/coverage.out ./...
+    @go tool cover -func=.tmp/coverage.out | awk '/^total:/ { sub("%", "", $NF); printf "Coverage: %s%%\n", $NF; exit($NF < 90) }'
 
 lint:
     go vet ./...

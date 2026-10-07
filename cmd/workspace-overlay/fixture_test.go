@@ -1,128 +1,72 @@
 package main
 
 import (
-	"context"
-	"os"
+	"bytes"
 	"path/filepath"
 	"strings"
 	"testing"
+	"workspace-overlay/internal/config"
+	"workspace-overlay/internal/gitrepo"
+	"workspace-overlay/internal/pathname"
+	"workspace-overlay/internal/scratch"
 )
 
 func TestFixtureCreate(t *testing.T) {
-	args := os.Args
-	t.Cleanup(func() { os.Args = args })
 	root := filepath.Join(t.TempDir(), "workspace")
-	os.Args = []string{"workspace-overlay", "fixture", "create", "--directory", root}
-	var err error
-	out, _ := captureOutput(t, func() { err = run() })
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	err := run([]string{"fixture", "create", "--directory", root}, stdout, stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, displayPath(filepath.Join(root, configName))) {
-		t.Fatalf("configuration output: %q", out)
+	if !strings.Contains(stdout.String(), pathname.Display(filepath.Join(root, config.Name))) {
+		t.Fatalf("configuration output: %q", stdout.String())
 	}
-	config, err := loadConfig(filepath.Join(root, configName))
+	cfg, err := config.Load(filepath.Join(root, config.Name))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"alpha", "beta"} {
-		project := config.Projects[name]
-		worktrees, err := discoverWorktrees(t.Context(), project.Path, true)
+		project := cfg.Projects[name]
+		listed, err := gitrepo.Command(t.Context(), project.Path, "worktree", "list", "--porcelain").Output()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(worktrees) != 2 {
-			t.Fatalf("%s worktrees: %v", name, worktrees)
+		if worktrees := strings.Count(string(listed), "worktree "); worktrees != 2 {
+			t.Fatalf("%s worktrees: %d in %q", name, worktrees, listed)
 		}
-		out, err := projectGit(t.Context(), project.Path, "status", "--porcelain").CombinedOutput()
+		out, err := gitrepo.Command(t.Context(), project.Path, "status", "--porcelain").CombinedOutput()
 		if err != nil || len(out) != 0 {
 			t.Fatalf("fixture backing files are not committed: %s (%v)", out, err)
 		}
-		out, err = projectGit(t.Context(), project.Path, "branch", "--show-current").CombinedOutput()
+		out, err = gitrepo.Command(t.Context(), project.Path, "branch", "--show-current").CombinedOutput()
 		if err != nil || string(out) != "main\n" {
 			t.Fatalf("fixture branch: %s (%v)", out, err)
 		}
 	}
 	edit := filepath.Join(root, ".ai", "alpha", "AGENTS.md")
-	writeFixture(t, edit, "retained edit\n")
-	captureOutput(t, func() { err = run() })
+	scratch.Write(t, edit, "retained edit\n")
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	err = run([]string{"fixture", "create", "--directory", root}, stdout, stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(mustReadFile(t, edit)); got != "retained edit\n" {
+	if got := string(scratch.Read(t, edit)); got != "retained edit\n" {
 		t.Fatalf("restart overwrote edit: %q", got)
 	}
 }
 
-func TestFixtureFailures(t *testing.T) {
-	t.Run("parent is a file", func(t *testing.T) {
-		parent := filepath.Join(t.TempDir(), "file")
-		writeFixture(t, parent, "keep")
-		if _, err := createFixture(t.Context(), filepath.Join(parent, "workspace")); err == nil {
-			t.Fatal("accepted file as parent")
-		}
-	})
-	t.Run("broken completed configuration", func(t *testing.T) {
-		root := filepath.Join(t.TempDir(), "workspace")
-		config, err := createFixture(t.Context(), root)
-		if err != nil {
-			t.Fatal(err)
-		}
-		writeFixture(t, config, "invalid TOML [")
-		if _, err := createFixture(t.Context(), root); err == nil {
-			t.Fatal("reused invalid configuration")
-		}
-	})
-	t.Run("cancelled initialization retains incomplete data", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		root := filepath.Join(t.TempDir(), "workspace")
-		if _, err := createFixture(ctx, root); err == nil {
-			t.Fatal("ignored cancellation")
-		}
-		mustReadFile(t, filepath.Join(root, "alpha", "AGENTS.md"))
-		if _, err := createFixture(t.Context(), root); err == nil {
-			t.Fatal("overwrote incomplete fixture")
-		}
-	})
-	t.Run("copy destination is a file", func(t *testing.T) {
-		root := filepath.Join(t.TempDir(), "file")
-		writeFixture(t, root, "keep")
-		if err := copyFixture(root); err == nil {
-			t.Fatal("copied onto file")
-		}
-	})
-}
-
-func TestFixtureGitIgnoresInheritedRepositoryOverrides(t *testing.T) {
-	foreign := t.TempDir()
-	writeFixture(t, filepath.Join(foreign, "keep.txt"), "keep")
-	t.Setenv("GIT_DIR", filepath.Join(foreign, ".git"))
-	t.Setenv("GIT_WORK_TREE", foreign)
-	root := filepath.Join(t.TempDir(), "workspace")
-	if _, err := createFixture(t.Context(), root); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(foreign, ".git")); !os.IsNotExist(err) {
-		t.Fatalf("foreign Git directory changed: %v", err)
-	}
-	if got := string(mustReadFile(t, filepath.Join(foreign, "keep.txt"))); got != "keep" {
-		t.Fatalf("foreign data changed: %q", got)
-	}
-}
-
 func TestFixtureCreateRefusesForeignDirectory(t *testing.T) {
-	args := os.Args
-	t.Cleanup(func() { os.Args = args })
 	root := t.TempDir()
-	writeFixture(t, filepath.Join(root, "keep.txt"), "keep")
-	os.Args = []string{"workspace-overlay", "fixture", "create", "--directory", root}
-	var err error
-	captureOutput(t, func() { err = run() })
+	scratch.Write(t, filepath.Join(root, "keep.txt"), "keep")
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	err := run([]string{"fixture", "create", "--directory", root}, stdout, stderr)
 	if err == nil {
 		t.Fatal("accepted foreign directory")
 	}
-	if got := string(mustReadFile(t, filepath.Join(root, "keep.txt"))); got != "keep" {
+	if got := string(scratch.Read(t, filepath.Join(root, "keep.txt"))); got != "keep" {
 		t.Fatalf("foreign data changed: %q", got)
 	}
 }

@@ -3,10 +3,10 @@
 # What It Does
 
 - **Shared overlays:** Apply ordered overlay directories to any configured projects.
-- **Recursive merges:** Merge directories at every depth and concatenate every colliding regular file.
+- **Recursive merges:** Merge directories at every depth. Text files that collide are joined end-to-end; binary collisions show an explanation instead of content.
 - **Writable files:** Save edits to the most-specific contributing layer while preserving earlier contributions.
 - **Live worktrees:** Detect registered Git worktrees and mount the same configured overlay sources into each checkout.
-- **Protected sources:** Reject deleting or moving existing overlay files through mounted projects.
+- **Protected sources:** Reject deleting or moving existing overlay files through mounted projects; entries created through a mount stay removable until it stops.
 - **Temporary Git exclusions:** Hide overlay-only paths from Git while mounted and remove managed exclusions on shutdown.
 
 # How It Works
@@ -20,15 +20,20 @@
 # How it Really Works
 
 - The mounted view covers the existing project directory. Ordinary project-file edits persist in that directory; overlay edits persist in their source directories. Unmounting reveals the backing project again.
-- File concatenation adds no separators and applies to binary files too. Include any needed newline in the source files. Conflicting file and directory types produce an I/O error.
-- A full-document save to a concatenated file must preserve every earlier contribution exactly as its prefix. Only the final contribution is replaced. To edit an earlier contribution, edit its source directly. Append and atomic editor saves are supported; truncating a merged file to zero clears only its final contribution.
+- Text files that collide are joined end to end with no separators, so include any needed newline in the source files. Binary files are never joined: when a path has copies in more than one layer and at least one is binary, reading that path returns an explanation that lists every copy and how to resolve the collision, the path rejects writes, and each open logs the collision to stderr. A copy counts as binary when its first 512 bytes do not look like text.
+- A file that comes from a single layer is served unchanged and behaves like an ordinary file, including shared memory mappings; free-space queries on a mounted project report the project's own filesystem. A joined file is held in memory while open and is limited to 64 MiB: opening a larger one, or writing or truncating one past that size, fails with "file too large".
+- A file that is a directory in one layer and a regular file in another returns an I/O error when accessed; the containing directory remains listable.
+- A full-document save to a merged file must preserve every earlier contribution exactly as its prefix. Only the final contribution is replaced. To edit an earlier contribution, edit its source directly. Append and atomic editor saves are supported; truncating a merged file to zero clears only its final contribution.
 - New files go into the backing project when their parent has project backing; otherwise they go into the most-specific overlay directory. A restricted overlay glob must include any new overlay path.
-- Overlay files and directories cannot be deleted or moved away through a project mount. Delete or move them in the source directory. Stop the project's overlays before recursively removing one of its worktrees.
+- Existing overlay files and directories cannot be deleted or moved away through a project mount. Delete or move them in the source directory. Stop the project's overlays before recursively removing one of its worktrees.
+- Entries created through a mount inside an overlay directory, such as an editor's swap file or a file written under a temporary name, can be renamed to a free name and removed through that mount until it stops. A file renamed over an existing overlay document replaces that document's final contribution (an atomic save), and the document stays protected.
 - Filesystem events trigger worktree and source reconciliation after a 200 ms debounce. A 30-second fallback scan covers missed events. Checkout locations come from `git worktree list --porcelain -z`; they can be outside the workspace.
+- A linked worktree that cannot be mounted safely (it lies inside another mount target, it contains an overlay source, or its path is already a mount of another filesystem) is skipped with a `Skipping worktree` message on stderr while the project and every other project keep running. It is tried again after Git unregisters and registers it again. Overlapping projects are rejected before anything is mounted.
 - `.git` always comes from the backing project. Overlay-only paths get marked blocks in Git's shared `info/exclude`; existing user entries are preserved. Because worktrees share this file, a rule can also hide a matching untracked backing path in another worktree. Tracked files are unaffected by ignore rules. See [Git's ignore documentation](https://git-scm.com/docs/gitignore).
-- Mount ownership and exact exclusion blocks are recorded under `<config-directory>/.tmp/workspace-overlay/`. After forced termination, run `overlay unmount` or `overlay mount --replace` to recover. Incomplete cleanup retains its record; edited managed blocks require manual resolution.
-- `overlay status` writes tab-separated target paths and filesystem types to stdout, using `unmounted` for inactive targets. With `--worktrees=false`, it prints filesystem types without paths. Status and unmount also inspect previously recorded mounts, including worktrees excluded from fresh discovery.
-- Mount messages and diagnostics go to stderr. Paths beneath your home directory use `~/`. Successful commands and clean shutdown exit with status 0; errors print `ERR:` and exit with status 1.
+- Configuration, project, and source paths are resolved through symbolic links, so a workspace reached through a symlink works, and status and mount messages show resolved paths.
+- Mount ownership and exact exclusion blocks are recorded under `$XDG_STATE_HOME/workspace-overlay/` (`~/.local/state/workspace-overlay/` when `XDG_STATE_HOME` is unset, empty, or relative), one set of files per workspace and project. `overlay mount --replace` first stops the selected projects' existing overlays and then validates and mounts. After forced termination, both `overlay unmount` and `overlay mount --replace` recover. Incomplete cleanup retains its record; edited managed blocks require manual resolution.
+- `overlay status` always prints one line per target: the target path, a tab, and the filesystem type (`unmounted` when inactive). `--worktrees=false` only limits discovery to primary projects; recorded mounts are still listed. Status and unmount also inspect previously recorded mounts, including worktrees excluded from fresh discovery.
+- Mount messages and diagnostics go to stderr. Paths beneath your home directory use `~/`. Successful commands and clean shutdown exit with status 0. Failed operations print only `ERR: <message>` on stderr and exit with status 1; mistyped commands additionally print the command's usage on stderr before the error line.
 - Set `AGENT=1`, `true`, or `yes` for compact help. `workspace-overlay skill` prints the embedded operating guide in either mode and works offline.
 - `fixture create` creates or reuses an isolated verification workspace with two Git projects, Alpha and Beta, and one linked worktree each. Their shared and project overlays include instructions, skills, and nested colliding files. Repeated creation retains edits and worktree changes. Existing foreign or incomplete directories are refused; failed initialization retains its partial files.
 
@@ -120,7 +125,9 @@ Per-overlay `collision` and `write` fields override `[defaults]`. The supported 
 
 # Limitations
 
-The runtime requires Linux. Directory moves across layers, hard links to concatenated files, rename flags, special-file creation, and native extended attributes are unsupported. Open merged files retain their original snapshots; reopen them to read updated source contributions.
+The runtime requires Linux. Directory moves across layers, hard links to merged files, rename flags, special-file creation, and native extended attributes are unsupported. Open merged files retain their original snapshots; reopen them to read updated source contributions. Merged files are held in memory and limited to 64 MiB total.
+
+A file that Git tracks in the project and that also has an overlay contribution reads as the joined content, so Git reports it as modified, and Git operations that must rewrite it (checkout, stash, restore, pull) fail while mounted; a `git commit -a` would record the overlay text in the project. Stop the overlay before such operations, or keep overlay files on paths the project does not track.
 
 # Options & Flags
 

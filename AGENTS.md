@@ -4,9 +4,9 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 
 ## Commands
 - Build: `just build` (writes `bin/workspace-overlay` with source paths removed)
-- Dev: `just dev [--config path] [--project name]` (default: all configured projects and worktrees)
-- Stop: `just stop [--config path] [--project name]`
-- Status: `just status [--config path] [--project name]`
+- Dev: `just dev [--project name]` (shared fixtures in `.tmp/dev-workspace`, all projects and worktrees by default)
+- Stop: `just stop [--project name]`
+- Status: `just status [--project name]`
 - Test: `go test -race -cover ./...` or `just test`
 - Lint: `go vet ./... && go mod tidy -diff` or `just lint`
 - Run: `go run ./cmd/workspace-overlay <args>` or `just run <args>`
@@ -18,6 +18,7 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - Copy `workspace-overlay.example.toml` into the workspace as `workspace-overlay.toml` and adjust its project and source paths. Runtime configuration and overlay data belong to that workspace.
 
 ## Conventions
+- Keep README usage focused on operating the background utility; omit sample terminal output blocks.
 - Command hierarchy uses subject-first noun-verb structure (`workspace-overlay overlay <mount|unmount|status>`).
 - Embedded skill contract: `workspace-overlay skill` prints `cmd/workspace-overlay/SKILL.md` verbatim; keep `SKILL.md` synchronized in the same change as any command, flag, default, environment, output, or side-effect change.
 - Dual-mode output: `AGENT=1` prefixes help screens with `ALERT: Agents must read \`AGENT=1 workspace-overlay skill\` before using this tool.`.
@@ -30,12 +31,21 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - Overlay source files and directories cannot be deleted through project or worktree mounts. Preserve ordinary project deletion and writable overlay edits, including atomic editor saves.
 - Keep the repository self-contained; integration tests create temporary projects and worktrees instead of relying on sibling fixtures. `example_config_test.go` exercises the shipped configuration with mounted reads and writes.
 - Keep the CLI checkout at its current location until the user requests relocation.
+- Generate live verification projects through `fixture create`; share embedded fixture data with integration tests and retain edits across restarts. Use mock names `alpha`, `beta`, and `workspace` in fixtures and examples.
 
 ## Gotchas
 - Mount replacement: an active overlay requires `--replace` to unmount and remount cleanly; refusing to unmount non-overlay filesystems.
 - Worktrees share Git metadata: all backing and Git exclude handles are opened before mounting any target.
 - Worktrees use the original configured overlay sources; do not create per-worktree `.ai` symlinks.
 - Home directory paths: paths inside `~` are abbreviated with `~/` in status and mount output.
+
+## Live verification
+- Run `just dev` to create or reuse `.tmp/dev-workspace` and mount `alpha`, `beta`, and `.workspaces/one/{alpha,beta}` within that workspace. Use `just status` and `just stop` from another terminal. Optional `--project alpha` selects one project.
+- Integration tests use `createFixture` and embedded `cmd/workspace-overlay/testdata/workspace/` data, including the shipped example configuration. Fixture Git commands disable hooks and signing and exclude inherited `GIT_*` overrides.
+- Append to `.tmp/dev-workspace/alpha/AGENTS.md`; verify the final contribution in `.tmp/dev-workspace/.ai/alpha/AGENTS.md` and a fresh read from `.tmp/dev-workspace/.workspaces/one/alpha/AGENTS.md`. Nested colliding notes are at `docs/nested/notes.md`; shared and project skills appear in `.agents/skills/`.
+- Add another worktree while mounted with `git -C .tmp/dev-workspace/alpha worktree add -b live-check ../.workspaces/two/alpha main`; `just status` should include it after watcher reconciliation. Stop overlays before `git worktree remove`.
+- Runtime fixture files are ignored under `.tmp/`. Stop removes managed exclusions and mounts; retain fixture edits and Git history for subsequent starts. Failed initialization retains an incomplete directory and refuses reuse rather than overwriting it.
+- For a real workspace use `just run overlay mount --config path/to/workspace-overlay.toml` instead of the fixture recipes.
 
 ## Boundaries
 - Always: automatically record all new instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)

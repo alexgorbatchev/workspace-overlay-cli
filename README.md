@@ -30,6 +30,7 @@
 - `overlay status` writes tab-separated target paths and filesystem types to stdout, using `unmounted` for inactive targets. With `--worktrees=false`, it prints filesystem types without paths. Status and unmount also inspect previously recorded mounts, including worktrees excluded from fresh discovery.
 - Mount messages and diagnostics go to stderr. Paths beneath your home directory use `~/`. Successful commands and clean shutdown exit with status 0; errors print `ERR:` and exit with status 1.
 - Set `AGENT=1`, `true`, or `yes` for compact help. `workspace-overlay skill` prints the embedded operating guide in either mode and works offline.
+- `fixture create` creates or reuses an isolated verification workspace with two Git projects, Alpha and Beta, and one linked worktree each. Their shared and project overlays include instructions, skills, and nested colliding files. Repeated creation retains edits and worktree changes. Existing foreign or incomplete directories are refused; failed initialization retains its partial files.
 
 # Prerequisites
 
@@ -50,12 +51,6 @@ Run from the directory containing `workspace-overlay.toml`, with the executable 
 ```sh
 # Check the selected project before mounting.
 workspace-overlay overlay status --project alpha --worktrees=false
-```
-
-Sample Output when the project is stopped:
-
-```text
-unmounted
 ```
 
 ```sh
@@ -110,6 +105,12 @@ Root options:
 
 These overlay commands accept no positional arguments. `workspace-overlay help [command]` prints command help. `workspace-overlay skill` accepts no arguments or command-specific flags.
 
+`workspace-overlay fixture create` (no positional arguments):
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--directory <path>` | | `.tmp/dev-workspace` | Create or reuse the verification workspace, relative to the current directory. |
+
 # Configuration
 
 Copy [workspace-overlay.example.toml](workspace-overlay.example.toml) into your workspace as `workspace-overlay.toml`, then adjust its paths and selectors. Create the configured source directories before mounting. All relative paths resolve from the configuration file's directory.
@@ -157,6 +158,26 @@ Per-overlay `collision` and `write` fields override `[defaults]`. The supported 
 # Limitations
 
 The runtime requires Linux. Directory moves across layers, hard links to concatenated files, rename flags, special-file creation, and native extended attributes are unsupported. Open merged files retain their original snapshots; reopen them to read updated source contributions.
+
+# Verification Workspace
+
+Create and mount the bundled mock workspace:
+
+```sh
+workspace-overlay fixture create
+workspace-overlay overlay mount --config .tmp/dev-workspace/workspace-overlay.toml --replace
+```
+
+In another terminal, read the merged documents and stop the mounts:
+
+```sh
+cat .tmp/dev-workspace/alpha/AGENTS.md
+cat .tmp/dev-workspace/.workspaces/one/alpha/docs/nested/notes.md
+workspace-overlay overlay status --config .tmp/dev-workspace/workspace-overlay.toml
+workspace-overlay overlay unmount --config .tmp/dev-workspace/workspace-overlay.toml
+```
+
+The workspace remains available after shutdown. Overlay edits persist under `.tmp/dev-workspace/.ai/`; ordinary project edits persist in their backing checkout. Contributor shortcuts and further live checks are in [AGENTS.md](AGENTS.md).
 
 # License
 

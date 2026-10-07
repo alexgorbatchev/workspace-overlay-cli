@@ -2,13 +2,14 @@ build:
     go build -trimpath -o bin/workspace-overlay ./cmd/workspace-overlay
 
 dev *args:
-    go run ./cmd/workspace-overlay overlay mount --replace {{args}}
+    go run ./cmd/workspace-overlay fixture create
+    go run ./cmd/workspace-overlay overlay mount --config .tmp/dev-workspace/workspace-overlay.toml --replace {{args}}
 
 stop *args:
-    go run ./cmd/workspace-overlay overlay unmount {{args}}
+    go run ./cmd/workspace-overlay overlay unmount --config .tmp/dev-workspace/workspace-overlay.toml {{args}}
 
 status *args:
-    go run ./cmd/workspace-overlay overlay status {{args}}
+    go run ./cmd/workspace-overlay overlay status --config .tmp/dev-workspace/workspace-overlay.toml {{args}}
 
 run *args:
     go run ./cmd/workspace-overlay {{args}}

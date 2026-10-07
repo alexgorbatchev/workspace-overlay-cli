@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -12,29 +13,24 @@ import (
 func TestExampleConfigurationMountsAndWrites(t *testing.T) {
 	const shutdownTimeout = 5 * time.Second
 	template := mustReadFile(t, filepath.Join("..", "..", "workspace-overlay.example.toml"))
-	root := t.TempDir()
-	configFile := filepath.Join(root, configName)
+	root := filepath.Join(t.TempDir(), "workspace")
+	configFile, err := createFixture(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	writeFixture(t, configFile, string(template))
 	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatal(err)
-	}
-	for _, project := range config.Projects {
-		initGitRepoWithCommit(t, project.Path)
-	}
-	for _, source := range config.Overlays {
-		writeFixture(t, filepath.Join(source.Source, "AGENTS.md"), source.Name+"\n")
 	}
 	selections, err := config.selections("", false, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	first := selections[0]
-	worktree := filepath.Join(root, ".workspaces", first.project)
-	cmd := projectGit(context.Background(), first.target, "worktree", "add", "--detach", worktree, "HEAD")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("add worktree: %v: %s", err, out)
-	}
+	worktree := filepath.Join(root, ".workspaces", "one", first.project)
+	const ignoredPath = ".agents/skills/workspace-check/local.md"
+	writeFixture(t, filepath.Join(worktree, ignoredPath), "untracked worktree backing file\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- mountSelections(ctx, selections) }()
@@ -48,10 +44,14 @@ func TestExampleConfigurationMountsAndWrites(t *testing.T) {
 		case <-time.After(shutdownTimeout):
 			t.Error("configured mounts did not stop")
 		}
+		out, err := projectGit(context.Background(), worktree, "status", "--porcelain", "--untracked-files=all").CombinedOutput()
+		if err != nil || !strings.Contains(string(out), ignoredPath) {
+			t.Errorf("untracked backing file not restored to Git status: %s (%v)", out, err)
+		}
 	})
 	for _, selection := range selections {
 		waitMount(t, selection.target, overlayType)
-		var want []byte
+		want := mustReadFile(t, filepath.Join("testdata", "workspace", selection.project, "AGENTS.md"))
 		for _, source := range selection.sources {
 			want = append(want, mustReadFile(t, filepath.Join(source.path, "AGENTS.md"))...)
 		}
@@ -60,6 +60,23 @@ func TestExampleConfigurationMountsAndWrites(t *testing.T) {
 		}
 	}
 	waitMount(t, worktree, overlayType)
+	for _, selection := range selections {
+		waitMount(t, filepath.Join(root, ".workspaces", "one", selection.project), overlayType)
+		mustReadFile(t, filepath.Join(selection.target, ".agents", "skills", "workspace-check", "SKILL.md"))
+		want := mustReadFile(t, filepath.Join("testdata", "workspace", selection.project, "docs", "nested", "notes.md"))
+		for _, source := range selection.sources {
+			want = append(want, mustReadFile(t, filepath.Join(source.path, "docs", "nested", "notes.md"))...)
+		}
+		if got := mustReadFile(t, filepath.Join(selection.target, "docs", "nested", "notes.md")); !bytes.Equal(got, want) {
+			t.Fatalf("nested merge: %q, want %q", got, want)
+		}
+	}
+	if out, err := projectGit(context.Background(), worktree, "check-ignore", ignoredPath).CombinedOutput(); err != nil || !strings.Contains(string(out), ignoredPath) {
+		t.Fatalf("shared exclusion did not hide untracked backing file: %s (%v)", out, err)
+	}
+	if out, err := projectGit(context.Background(), first.target, "ls-files", "AGENTS.md").CombinedOutput(); err != nil || string(out) != "AGENTS.md\n" {
+		t.Fatalf("tracked collision lost: %s (%v)", out, err)
+	}
 	document := mustReadFile(t, filepath.Join(first.target, "AGENTS.md"))
 	if got := mustReadFile(t, filepath.Join(worktree, "AGENTS.md")); !bytes.Equal(got, document) {
 		t.Fatalf("worktree overlay: got %q, want %q", got, document)

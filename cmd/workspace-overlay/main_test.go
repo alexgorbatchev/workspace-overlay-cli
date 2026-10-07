@@ -278,7 +278,7 @@ func TestAgentHelpPaths(t *testing.T) {
 	t.Setenv("AGENT", "1")
 	args := os.Args
 	t.Cleanup(func() { os.Args = args })
-	paths := [][]string{{"--help"}, {"overlay", "--help"}, {"overlay", "mount", "--help"}, {"overlay", "unmount", "--help"}, {"overlay", "status", "--help"}, {"skill", "--help"}, {"help", "overlay"}}
+	paths := [][]string{{"--help"}, {"overlay", "--help"}, {"overlay", "mount", "--help"}, {"overlay", "unmount", "--help"}, {"overlay", "status", "--help"}, {"fixture", "--help"}, {"fixture", "create", "--help"}, {"help", "fixture"}, {"skill", "--help"}, {"help", "overlay"}}
 	for _, path := range paths {
 		t.Run(strings.Join(path, " "), func(t *testing.T) {
 			os.Args = append([]string{"workspace-overlay"}, path...)

@@ -68,6 +68,7 @@ func run() error {
 		overlay.AddCommand(command)
 	}
 	root.AddCommand(overlay)
+	root.AddCommand(fixtureCommand())
 	opts := helptree.HelpOptions{Catalog: helptree.TechCatalog{}, Tree: helptree.TreeOptions{HideGeneratedCommands: true}}
 	if err := helptree.SetupWithOptions(root, opts); err != nil {
 		return err

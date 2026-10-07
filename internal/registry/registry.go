@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -100,14 +101,14 @@ func Open(root, project string) (*Registry, error) {
 		return nil, err
 	}
 	if _, err := os.Stat(r.file); !os.IsNotExist(err) {
-		logged.Close(r.lock)
+		r.Unlock()
 		if err != nil {
 			return nil, err
 		}
 		return nil, fmt.Errorf("project %s has an unfinished registry; use overlay unmount or mount --replace to recover", project)
 	}
 	if err := removeOwned(r.stop); err != nil {
-		logged.Close(r.lock)
+		r.Unlock()
 		return nil, err
 	}
 	return r, nil
@@ -122,16 +123,51 @@ func Acquire(root, project string) (*Registry, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	lock, err := os.OpenFile(file+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	for {
+		lock, err := os.OpenFile(file+".lock", os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			return nil, err
+		}
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			logged.Close(lock)
+			return nil, fmt.Errorf("project %s already has a running overlay process: %w", project, err)
+		}
+		// An owner removes the lock file when it finishes. A handle opened just
+		// before that locks a file nobody else can find, so it is dropped and
+		// the file that is there now is tried instead.
+		current, err := linked(lock)
+		if err != nil {
+			logged.Close(lock)
+			return nil, err
+		}
+		if !current {
+			logged.Close(lock)
+			continue
+		}
+		return &Registry{dir: dir, file: file, stop: stop, lock: lock, state: State{Version: 1, Root: root, Project: project}}, nil
+	}
+}
+
+// linked reports whether an open file is still the one found under its name.
+func linked(file *os.File) (bool, error) {
+	held, err := file.Stat()
 	if err != nil {
-		return nil, err
+		return false, err
 	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		logged.Close(lock)
-		return nil, fmt.Errorf("project %s already has a running overlay process: %w", project, err)
+	found, err := os.Stat(file.Name())
+	if os.IsNotExist(err) {
+		return false, nil
 	}
-	registry := &Registry{dir: dir, file: file, stop: stop, lock: lock, state: State{Version: 1, Root: root, Project: project}}
-	return registry, nil
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(held, found), nil
+}
+
+// release gives up ownership. The lock file is removed while the lock is still
+// held, so the next owner always starts from a file of its own.
+func (r *Registry) release() error {
+	return errors.Join(removeOwned(r.lock.Name()), r.lock.Close())
 }
 
 // saveLocked must be called while holding r.mu.
@@ -216,7 +252,9 @@ func (r *Registry) Discard() error {
 
 // Unlock releases ownership and keeps the records, for example after a recovery attempt.
 func (r *Registry) Unlock() {
-	logged.Close(r.lock)
+	if err := r.release(); err != nil {
+		log.Printf("release project lock: %v", err)
+	}
 }
 
 // Close removes the record if cleanup is complete, or keeps it for recovery.
@@ -224,9 +262,9 @@ func (r *Registry) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.state.Mounts) != 0 {
-		return errors.Join(fmt.Errorf("cleanup incomplete; mount registry retained for overlay unmount recovery"), r.lock.Close())
+		return errors.Join(fmt.Errorf("cleanup incomplete; mount registry retained for overlay unmount recovery"), r.release())
 	}
-	return errors.Join(removeOwned(r.file), removeOwned(r.file+".next"), removeOwned(r.stop), r.lock.Close())
+	return errors.Join(removeOwned(r.file), removeOwned(r.file+".next"), removeOwned(r.stop), r.release())
 }
 
 func removeOwned(name string) error {

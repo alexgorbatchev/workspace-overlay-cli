@@ -7,7 +7,7 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - Dev: `just dev [--project name]` (shared fixtures in `.tmp/dev-workspace`, all projects and worktrees by default)
 - Stop: `just stop [--project name]`
 - Status: `just status [--project name]`
-- Test: `just test` (race detector plus the 90% coverage gate); `go test -race -cover ./...` runs the tests without the gate.
+- Test: `just test` (race detector plus the 90% coverage gate; always runs every package fresh, because a result replayed from the test cache carries coverage blocks of sources that have since changed); `go test -race -cover ./...` runs the tests without the gate.
 - Lint: `go vet ./... && go mod tidy -diff` or `just lint`
 - Run: `go run ./cmd/workspace-overlay <args>` or `just run <args>`
 - Run AI: `AGENT=1 go run ./cmd/workspace-overlay <args>` or `just run-ai <args>`

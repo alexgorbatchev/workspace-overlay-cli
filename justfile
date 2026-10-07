@@ -19,7 +19,7 @@ run-ai *args:
 
 test:
     @mkdir -p .tmp
-    go test -race -coverpkg="$(go list ./... | awk '!/\/internal\/scratch$/' | paste -sd, -)" -coverprofile=.tmp/coverage.out ./...
+    go test -race -count=1 -coverpkg="$(go list ./... | awk '!/\/internal\/scratch$/' | paste -sd, -)" -coverprofile=.tmp/coverage.out ./...
     @go tool cover -func=.tmp/coverage.out | awk '/^total:/ { sub("%", "", $NF); printf "Coverage: %s%%\n", $NF; exit($NF < 90) }'
 
 lint:

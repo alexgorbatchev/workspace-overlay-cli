@@ -47,6 +47,7 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - Home directory paths: paths inside `~` are abbreviated with `~/` in status and mount output.
 - Shared memory mapping: a test that maps a mounted file into memory must do so from a child process, because a page fault on a mount served by the same process can deadlock it (see `TestSharedMappingOfProjectFile`).
 - Session tests never wait for the watcher with a fixed sleep: `awaitReconcile` in `internal/session/watcher_test.go` registers a worktree and waits for its mount, which proves a reconcile ran after the call.
+- Killing an owner: a process killed while one of its threads is inside a file operation on a mount it serves can never exit, because the request waits for an answer only that process could give. go-fuse makes such a call (`pollHack` opens `.go-fuse-epoll-hack`) for up to a few milliseconds after each mount appears, so a test that kills an owner first waits for its `Mounted` report (`startOwner` in `internal/session/recovery_test.go`). A stuck owner is released with `echo 1 > /sys/fs/fuse/connections/<id>/abort`.
 - Git tracking: a file that Git tracks in the project and that also has an overlay contribution reads as the joined content, so Git reports it as modified, and Git operations that rewrite it (checkout, stash, restore, pull) fail while mounted.
 
 ## Live verification

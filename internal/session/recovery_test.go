@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,23 +36,60 @@ func TestOwnerProcessHelper(t *testing.T) {
 	}
 }
 
+// processOutput collects what a child process prints while the test reads it.
+type processOutput struct {
+	mu   sync.Mutex
+	text bytes.Buffer
+}
+
+func (o *processOutput) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.text.Write(p)
+}
+
+func (o *processOutput) String() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.text.String()
+}
+
+// startOwner serves a configuration from another process, the way a real
+// session runs, so a test can kill it and leave its mounts behind. It returns
+// once the owner has reported that many targets as mounted.
+//
+// The report matters: a mount appears in the mount table before the FUSE
+// library has finished its own first access to it, and a process killed during
+// that access can never exit, because the request it waits on would have been
+// answered by the process itself.
+func startOwner(t *testing.T, configFile string, mounts int) (*exec.Cmd, *processOutput) {
+	t.Helper()
+	owner := exec.Command(os.Args[0], "-test.run=^TestOwnerProcessHelper$")
+	owner.Env = append(os.Environ(), "WORKSPACE_OVERLAY_OWNER_CONFIG="+configFile)
+	output := &processOutput{}
+	owner.Stdout = output
+	owner.Stderr = output
+	if err := owner.Start(); err != nil {
+		t.Fatalf("start owner process: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for strings.Count(output.String(), "Mounted ") < mounts {
+		if time.Now().After(deadline) {
+			t.Fatalf("owner did not report %d mounts:\n%s", mounts, output)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return owner, output
+}
+
 func TestReplaceRecoversDeadOwner(t *testing.T) {
 	root := t.TempDir()
 	project := filepath.Join(root, "project")
 	scratch.GitRepo(t, project)
-
-	workspaceDir := filepath.Join(root, ".workspaces", "one", "project")
-	cmd := exec.Command("git", "-C", project, "worktree", "add", "-b", "linked", workspaceDir, "HEAD")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("add worktree: %v: %s", err, out)
-	}
-
-	aiDir := filepath.Join(root, "ai")
-	overlayFile := filepath.Join(aiDir, "overlay-only.md")
-	scratch.Write(t, overlayFile, "overlay\n")
-
-	configFile := filepath.Join(root, config.Name)
-	scratch.Write(t, configFile, `version=1
+	worktree := filepath.Join(root, ".workspaces", "one", "project")
+	addWorktree(t, project, "linked", worktree)
+	scratch.Write(t, filepath.Join(root, "ai", "overlay-only.md"), "overlay\n")
+	configFile := scratch.Write(t, filepath.Join(root, config.Name), `version=1
 [projects.project]
 path='project'
 [[overlays]]
@@ -58,120 +97,76 @@ name='ai'
 source='ai'
 projects=['*']
 `)
+	targets := []string{project, worktree}
 
-	cmd = exec.Command(os.Args[0], "-test.run=^TestOwnerProcessHelper$")
-	cmd.Env = append(os.Environ(), "WORKSPACE_OVERLAY_OWNER_CONFIG="+configFile)
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start owner process: %v", err)
+	owner, ownerOutput := startOwner(t, configFile, len(targets))
+	for _, target := range targets {
+		waitMount(t, target, overlayfs.FilesystemType)
 	}
-
-	// Wait for both mounts to be established
-	waitMount(t, project, overlayfs.FilesystemType)
-	waitMount(t, workspaceDir, overlayfs.FilesystemType)
-
-	kind, err := mountedType(context.Background(), project)
-	if err != nil {
-		t.Fatalf("check mount type: %v", err)
+	if err := owner.Process.Kill(); err != nil {
+		t.Fatalf("kill owner: %v", err)
 	}
-	if kind != overlayfs.FilesystemType {
-		t.Fatalf("expected mount type %s, got %s", overlayfs.FilesystemType, kind)
-	}
-
-	if err := cmd.Process.Kill(); err != nil {
-		t.Fatalf("kill process: %v", err)
-	}
-	_ = cmd.Wait() // error is expected
-
-	// Precondition: mount should still show as mounted but be dead
-	kind, err = mountedType(context.Background(), project)
-	if err != nil {
-		t.Fatalf("check dead mount type: %v", err)
-	}
-	if kind != overlayfs.FilesystemType {
-		t.Fatalf("expected dead mount still visible as %s, got %s", overlayfs.FilesystemType, kind)
-	}
-
-	_, err = os.Lstat(filepath.Join(project, ".git"))
-	if err == nil {
-		t.Fatal("expected error accessing dead mount, got nil")
-	}
-
+	_ = owner.Wait() // a killed process always reports an error
 	t.Cleanup(func() {
-		for _, target := range []string{project, workspaceDir} {
-			err := unmountOverlay(context.Background(), target)
-			if err != nil {
-				t.Logf("cleanup unmount error: %v", err)
+		for _, target := range targets {
+			if err := unmountOverlay(context.Background(), target); err != nil {
+				t.Logf("cleanup unmount: %v", err)
 			}
 		}
 	})
+
+	// The owner is gone but its mounts remain: still listed, no longer served.
+	if kind, err := mountedType(context.Background(), project); err != nil || kind != overlayfs.FilesystemType {
+		t.Fatalf("dead mount: %q, %v; want it still listed as %s", kind, err, overlayfs.FilesystemType)
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".git")); err == nil {
+		t.Fatal("dead mount still answers")
+	}
 
 	cfg, err := config.Load(configFile)
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	mounts, err := Selections(cfg, "", true, true)
+	replacing, err := Selections(cfg, "", true, true)
 	if err != nil {
 		t.Fatalf("get selections: %v", err)
 	}
-
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	finished := make(chan error, 1)
-	go func() {
-		finished <- Mount(ctx, mounts)
-	}()
+	go func() { finished <- Mount(ctx, replacing) }()
 
-	// Poll for successful mount within 10 seconds
-	deadline := time.Now().Add(10 * time.Second)
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-
-	var lastErr error
-	success := false
-	for time.Now().Before(deadline) {
+	served := func() bool {
+		for _, target := range targets {
+			if data, err := os.ReadFile(filepath.Join(target, "overlay-only.md")); err != nil || string(data) != "overlay\n" {
+				return false
+			}
+		}
+		return true
+	}
+	deadline := time.After(10 * time.Second)
+	for !served() {
 		select {
 		case err := <-finished:
-			if err != nil {
-				t.Fatalf("mountSelections returned error: %v", err)
-			}
-			success = true
-		case <-ticker.C:
-			data, err := os.ReadFile(filepath.Join(project, "overlay-only.md"))
-			if err == nil && string(data) == "overlay\n" {
-				data2, err2 := os.ReadFile(filepath.Join(workspaceDir, "overlay-only.md"))
-				if err2 == nil && string(data2) == "overlay\n" {
-					success = true
-				}
-			}
-			lastErr = err
+			t.Fatalf("Mount returned before serving the overlay: %v\nowner output:\n%s", err, ownerOutput)
+		case <-deadline:
+			t.Fatalf("overlay not served 10 s after mount --replace\nowner output:\n%s", ownerOutput)
+		case <-time.After(50 * time.Millisecond):
 		}
-		if success {
-			break
-		}
-	}
-
-	if !success {
-		output := output.String()
-		t.Logf("owner process output:\n%s", output)
-		if lastErr != nil {
-			t.Logf("last read error: %v", lastErr)
-		}
-		cancel()
-		t.Fatal("mount recovery did not succeed within 10 seconds")
 	}
 
 	cancel()
 	select {
-	case <-finished:
+	case err := <-finished:
+		if err != nil {
+			t.Errorf("Mount after cancel: %v", err)
+		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("mountSelections did not exit within timeout after context cancel")
+		t.Fatal("Mount did not stop after cancel")
 	}
-
-	waitMount(t, project, "")
-	waitMount(t, workspaceDir, "")
-
+	for _, target := range targets {
+		waitMount(t, target, "")
+	}
 	state, err := registry.Read(root, "project")
 	if err != nil {
 		t.Fatalf("read registry: %v", err)

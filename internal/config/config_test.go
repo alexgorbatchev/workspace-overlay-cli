@@ -260,6 +260,39 @@ func TestSymlinkedConfigResolvesToRealTarget(t *testing.T) {
 	}
 }
 
+// A project or overlay source that is itself a symbolic link is addressed by
+// its real location, the directory the mount and the watcher act on.
+func TestSymlinkedProjectAndSourceResolveToRealPaths(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(root, "real-project")
+	scratch.GitRepo(t, project)
+	source := scratch.Mkdir(t, filepath.Join(root, "real-source"))
+	for link, target := range map[string]string{"project": project, "source": source} {
+		if err := os.Symlink(target, filepath.Join(root, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scratch.Write(t, filepath.Join(root, Name), "version=1\n[projects.project]\npath='project'\n[[overlays]]\nname='shared'\nsource='source'\nprojects=['*']\n")
+
+	cfg, err := Load(filepath.Join(root, Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selections, err := cfg.Selections("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := selections[0].Target; got != project {
+		t.Errorf("target = %q, want the real directory %q", got, project)
+	}
+	if got := selections[0].Sources[0].Path; got != source {
+		t.Errorf("source = %q, want the real directory %q", got, source)
+	}
+}
+
 func TestMain(m *testing.M) {
 	scratch.Main(m)
 }

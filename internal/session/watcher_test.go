@@ -26,6 +26,15 @@ func waitMount(t *testing.T, target, expected string) {
 	t.Fatalf("mount %s did not reach %q", target, expected)
 }
 
+// addWorktree registers a linked worktree of project on a new branch.
+func addWorktree(t *testing.T, project, branch, path string) {
+	t.Helper()
+	cmd := exec.Command("git", "-C", project, "worktree", "add", "-b", branch, path, "HEAD")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("add worktree %s: %v: %s", branch, err, out)
+	}
+}
+
 // awaitReconcile returns once the session has acted on everything that
 // happened before the call. The session takes one worktree listing per round
 // and only that round can mount a worktree registered here, so seeing this
@@ -33,10 +42,7 @@ func waitMount(t *testing.T, target, expected string) {
 func awaitReconcile(t *testing.T, project, root, name string) {
 	t.Helper()
 	worktree := filepath.Join(root, ".workspaces", name)
-	cmd := exec.Command("git", "-C", project, "worktree", "add", "-b", name, worktree, "HEAD")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("add worktree %s: %v: %s", name, err, out)
-	}
+	addWorktree(t, project, name, worktree)
 	waitMount(t, worktree, overlayfs.FilesystemType)
 }
 
@@ -77,14 +83,7 @@ func TestLiveWorktreeDiscovery(t *testing.T) {
 	})
 	waitMount(t, project, overlayfs.FilesystemType)
 	worktree := filepath.Join(root, ".workspaces", "live")
-	cmd := exec.Command("git", "-C", project, "worktree", "add", "-b", "live", worktree, "HEAD")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		ref, readErr := os.ReadFile(filepath.Join(project, ".git", "refs", "heads", "live"))
-		t.Logf("new branch reference: %q (%v)", ref, readErr)
-		refs, refsErr := exec.Command("git", "-C", project, "show-ref").CombinedOutput()
-		t.Logf("Git references: %s (%v)", refs, refsErr)
-		t.Fatalf("add worktree: %v: %s", err, out)
-	}
+	addWorktree(t, project, "live", worktree)
 	waitMount(t, worktree, overlayfs.FilesystemType)
 	data, err := os.ReadFile(filepath.Join(worktree, "shared.txt"))
 	if err != nil || string(data) != "shared" {
@@ -99,8 +98,7 @@ func TestLiveWorktreeDiscovery(t *testing.T) {
 	awaitReconcile(t, project, root, "first-round")
 	awaitReconcile(t, project, root, "second-round")
 	waitMount(t, worktree, "")
-	cmd = exec.Command("git", "-C", worktree, "rev-parse", "--absolute-git-dir")
-	metadata, err := cmd.Output()
+	metadata, err := exec.Command("git", "-C", worktree, "rev-parse", "--absolute-git-dir").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,48 +137,38 @@ func TestLiveWorktreeDiscovery(t *testing.T) {
 	t.Fatal("exclude file was not restored")
 }
 
+// A worktree registered inside the mounted project cannot be mounted. The
+// session skips it and keeps serving the project and its other worktrees.
 func TestNestedWorktreeIsSkippedWhileMounted(t *testing.T) {
 	root := t.TempDir()
 	project := filepath.Join(root, "project")
 	scratch.GitRepo(t, project)
-	shared := filepath.Join(root, ".ai", "shared")
-	if err := os.MkdirAll(shared, 0755); err != nil {
-		t.Fatal(err)
-	}
+	shared := scratch.Mkdir(t, filepath.Join(root, ".ai", "shared"))
 	selection := Selection{Root: root, Project: "project", Target: project, Worktrees: true,
 		Sources: []config.Source{{Name: "shared", Path: shared, Glob: "**/*"}}}
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan error, 1)
 	go func() { finished <- mountProjects(ctx, selection) }()
 	waitMount(t, project, overlayfs.FilesystemType)
-	// Add a nested worktree (would overlap the project mount)
-	cmd := exec.Command("git", "-C", project, "worktree", "add", "-b", "nested", filepath.Join(project, "nested"), "HEAD")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("create nested worktree: %v %s", err, out)
+
+	nested := filepath.Join(project, "nested")
+	addWorktree(t, project, "nested", nested)
+	// Both rounds list the nested worktree. Two rounds: a mount wrongly
+	// started by the first is up by the second.
+	awaitReconcile(t, project, root, "sibling")
+	awaitReconcile(t, project, root, "second-sibling")
+
+	select {
+	case err := <-finished:
+		t.Fatalf("session stopped over a nested worktree: %v", err)
+	default:
 	}
-	// For 1500 ms the mount goroutine must NOT return, and mountedType of project must still be overlayfs.FilesystemType
-	deadline := time.Now().Add(1500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		select {
-		case err := <-finished:
-			t.Fatalf("mount goroutine returned early with error: %v", err)
-		default:
+	for target, want := range map[string]string{project: overlayfs.FilesystemType, nested: ""} {
+		if kind, err := mountedType(context.Background(), target); err != nil || kind != want {
+			t.Fatalf("mount at %s: %q, %v; want %q", target, kind, err, want)
 		}
-		kind, err := mountedType(context.Background(), project)
-		if err != nil || kind != overlayfs.FilesystemType {
-			t.Fatalf("project mount state changed: %q, %v", kind, err)
-		}
-		time.Sleep(50 * time.Millisecond)
 	}
-	// Add a valid sibling worktree
-	sibling := filepath.Join(root, ".workspaces", "sibling")
-	cmd = exec.Command("git", "-C", project, "worktree", "add", "-b", "sibling", sibling, "HEAD")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("create sibling worktree: %v %s", err, out)
-	}
-	// This proves the project is still reconciling
-	waitMount(t, sibling, overlayfs.FilesystemType)
-	// Cancel context and expect nil result within 5 s
+
 	cancel()
 	select {
 	case err := <-finished:

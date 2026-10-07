@@ -6,9 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-	"workspace-overlay/internal/config"
-	"workspace-overlay/internal/overlayfs"
-	"workspace-overlay/internal/scratch"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/config"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/overlayfs"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 func TestServeIntegration(t *testing.T) {

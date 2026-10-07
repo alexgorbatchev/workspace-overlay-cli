@@ -9,11 +9,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"workspace-overlay/internal/config"
-	"workspace-overlay/internal/session"
 
 	helptree "github.com/alexgorbatchev/cobra-help-tree/v2"
 	"github.com/spf13/cobra"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/config"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/session"
 )
 
 //go:embed SKILL.md

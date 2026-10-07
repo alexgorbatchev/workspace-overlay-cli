@@ -19,6 +19,7 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 
 ## Conventions
 - Layout: `cmd/workspace-overlay` only wires commands and embeds `SKILL.md`. Code lives in `internal/` by responsibility: `config` (TOML), `overlayfs` (merged view and FUSE nodes), `session` (mounting, worktrees, recovery), `registry` (state files), `gitexclude`, `fixture`, `pathname`, `gitrepo`, `logged`. `internal/scratch` is test support and is excluded from the coverage gate.
+- Module path: `github.com/alexgorbatchev/workspace-overlay-cli`. Group imports as standard library, third-party, then this module (`goimports -local github.com/alexgorbatchev/workspace-overlay-cli`).
 - `overlayfs` tests mount a view directly with `View.Mount`; only `session` tests go through `Mount`, the registry and Git exclusions.
 - Keep README usage focused on operating the background utility; omit sample terminal output blocks.
 - Command hierarchy uses subject-first noun-verb structure (`workspace-overlay overlay <mount|unmount|status>`).

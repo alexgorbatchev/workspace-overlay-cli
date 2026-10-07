@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"workspace-overlay/internal/logged"
-	"workspace-overlay/internal/scratch"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/logged"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 func TestMain(m *testing.M) {

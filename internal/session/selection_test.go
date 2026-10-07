@@ -3,8 +3,9 @@ package session
 import (
 	"path/filepath"
 	"testing"
-	"workspace-overlay/internal/config"
-	"workspace-overlay/internal/scratch"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/config"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 func TestSelectedCarriesMountOptions(t *testing.T) {

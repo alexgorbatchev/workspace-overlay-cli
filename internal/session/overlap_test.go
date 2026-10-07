@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"workspace-overlay/internal/config"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/config"
 )
 
 func TestGroupedSourceOverlap(t *testing.T) {

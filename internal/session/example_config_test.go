@@ -8,11 +8,12 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"workspace-overlay/internal/config"
-	"workspace-overlay/internal/fixture"
-	"workspace-overlay/internal/gitrepo"
-	"workspace-overlay/internal/overlayfs"
-	"workspace-overlay/internal/scratch"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/config"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/fixture"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitrepo"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/overlayfs"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 func TestExampleConfigurationMountsAndWrites(t *testing.T) {

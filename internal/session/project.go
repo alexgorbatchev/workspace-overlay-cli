@@ -8,10 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-	"workspace-overlay/internal/gitexclude"
-	"workspace-overlay/internal/overlayfs"
-	"workspace-overlay/internal/pathname"
-	"workspace-overlay/internal/registry"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitexclude"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/overlayfs"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/registry"
 )
 
 const debounceDelay = 200 * time.Millisecond

@@ -3,8 +3,9 @@ package session
 import (
 	"context"
 	"fmt"
-	"workspace-overlay/internal/gitexclude"
-	"workspace-overlay/internal/registry"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitexclude"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/registry"
 )
 
 func stopRegistered(ctx context.Context, root, project string) error {

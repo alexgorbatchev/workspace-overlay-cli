@@ -14,8 +14,9 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"workspace-overlay/internal/gitrepo"
-	"workspace-overlay/internal/logged"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitrepo"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/logged"
 )
 
 // File keeps a pre-mount handle: opening .git through the mounted filesystem would recurse.

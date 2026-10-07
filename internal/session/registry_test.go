@@ -7,9 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"workspace-overlay/internal/gitexclude"
-	"workspace-overlay/internal/registry"
-	"workspace-overlay/internal/scratch"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitexclude"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/registry"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 func TestRegistryPreservesUnfinishedCleanup(t *testing.T) {

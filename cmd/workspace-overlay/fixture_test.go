@@ -5,10 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"workspace-overlay/internal/config"
-	"workspace-overlay/internal/gitrepo"
-	"workspace-overlay/internal/pathname"
-	"workspace-overlay/internal/scratch"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/config"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitrepo"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 func TestFixtureCreate(t *testing.T) {

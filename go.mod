@@ -1,4 +1,4 @@
-module workspace-overlay
+module github.com/alexgorbatchev/workspace-overlay-cli
 
 go 1.26.2
 

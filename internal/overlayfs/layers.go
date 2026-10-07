@@ -15,7 +15,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/hanwen/go-fuse/v2/fs"
 
-	"workspace-overlay/internal/gitexclude"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitexclude"
 )
 
 type layer struct {

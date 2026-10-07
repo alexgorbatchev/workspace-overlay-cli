@@ -9,11 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"workspace-overlay/internal/logged"
-	"workspace-overlay/internal/pathname"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/logged"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
 )
 
 // sniffLength is how much of a file http.DetectContentType inspects.

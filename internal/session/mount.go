@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"workspace-overlay/internal/pathname"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
 )
 
 func serve(ctx context.Context, plan mountPlan) error {

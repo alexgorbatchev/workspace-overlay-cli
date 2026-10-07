@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
-	"workspace-overlay/internal/fixture"
-	"workspace-overlay/internal/pathname"
 
 	"github.com/spf13/cobra"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/fixture"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
 )
 
 func fixtureCommand() *cobra.Command {

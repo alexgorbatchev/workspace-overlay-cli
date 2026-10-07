@@ -8,8 +8,9 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
-	"workspace-overlay/internal/gitexclude"
-	"workspace-overlay/internal/scratch"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitexclude"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 func TestFilteredGitExclusions(t *testing.T) {

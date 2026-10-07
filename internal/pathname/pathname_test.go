@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"workspace-overlay/internal/scratch"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 func TestMain(m *testing.M) {

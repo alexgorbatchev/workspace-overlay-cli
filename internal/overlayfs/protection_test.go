@@ -6,10 +6,11 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
-	"workspace-overlay/internal/scratch"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 func TestOverlayDeletionProtection(t *testing.T) {

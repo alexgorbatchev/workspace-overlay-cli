@@ -10,7 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"workspace-overlay/internal/pathname"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
 )
 
 func TestMain(m *testing.M) {

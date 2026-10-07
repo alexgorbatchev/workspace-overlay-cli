@@ -6,7 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"workspace-overlay/internal/pathname"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
 )
 
 func TestStatusAlwaysNamesTarget(t *testing.T) {

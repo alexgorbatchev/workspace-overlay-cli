@@ -10,11 +10,12 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"workspace-overlay/internal/pathname"
-	"workspace-overlay/internal/scratch"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 // readCollisionNotice is a helper that opens, reads, and closes a file handle,

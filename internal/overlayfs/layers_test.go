@@ -9,7 +9,8 @@ import (
 	"sort"
 	"syscall"
 	"testing"
-	"workspace-overlay/internal/scratch"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 func setupTestView(t *testing.T) (*View, string, string, string) {

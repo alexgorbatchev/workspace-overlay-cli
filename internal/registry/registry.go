@@ -14,7 +14,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"workspace-overlay/internal/logged"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/logged"
 )
 
 // Mount records one mounted overlay with its Git exclusions.

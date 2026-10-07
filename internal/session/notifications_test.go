@@ -6,10 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-	"workspace-overlay/internal/overlayfs"
-	"workspace-overlay/internal/scratch"
 
 	"github.com/fsnotify/fsnotify"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/overlayfs"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 // sessionView builds a view over a project directory and two overlay source

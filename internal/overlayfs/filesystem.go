@@ -8,10 +8,11 @@ import (
 	"path"
 	"sort"
 	"syscall"
-	"workspace-overlay/internal/logged"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/logged"
 )
 
 type node struct {

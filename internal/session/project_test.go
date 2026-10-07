@@ -6,11 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"workspace-overlay/internal/config"
-	"workspace-overlay/internal/registry"
-	"workspace-overlay/internal/scratch"
 
 	"github.com/fsnotify/fsnotify"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/config"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/registry"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 func testProjectRunner(t *testing.T) *projectRunner {

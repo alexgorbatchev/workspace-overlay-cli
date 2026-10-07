@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"workspace-overlay/internal/config"
-	"workspace-overlay/internal/gitrepo"
-	"workspace-overlay/internal/pathname"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/config"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitrepo"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
 )
 
 //go:embed all:testdata/workspace

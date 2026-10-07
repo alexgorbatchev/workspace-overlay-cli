@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"workspace-overlay/internal/config"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/config"
 )
 
 func TestWorktreeIsolationMissingDirectories(t *testing.T) {

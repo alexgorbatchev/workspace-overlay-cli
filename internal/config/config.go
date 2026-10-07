@@ -8,10 +8,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"workspace-overlay/internal/pathname"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
 )
 
 // Name is the configuration file looked for in the working directory and its ancestors.

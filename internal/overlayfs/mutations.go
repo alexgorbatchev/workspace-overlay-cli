@@ -8,10 +8,11 @@ import (
 	"path"
 	"syscall"
 	"time"
-	"workspace-overlay/internal/logged"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/logged"
 )
 
 func (n *node) Create(ctx context.Context, name string, flags, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {

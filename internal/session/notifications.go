@@ -8,9 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"workspace-overlay/internal/gitrepo"
 
 	"github.com/fsnotify/fsnotify"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitrepo"
 )
 
 type notificationRoot struct {

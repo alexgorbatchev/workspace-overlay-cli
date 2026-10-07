@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -117,5 +118,32 @@ func TestFailedPlanRestoresExclusions(t *testing.T) {
 	state, err := registry.Read(root, "project")
 	if err != nil || len(state.Mounts) != 0 {
 		t.Fatalf("failed mount retained records: %+v %v", state, err)
+	}
+}
+
+// A project that fails to start after some of its targets were prepared
+// leaves no trace of them: no Git exclusions and no registry record.
+func TestFailedStartDiscardsPreparedPlans(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	scratch.GitRepo(t, project)
+	source := filepath.Join(root, "source")
+	scratch.Write(t, filepath.Join(source, "overlay-only.md"), "overlay")
+	exclude := filepath.Join(project, ".git", "info", "exclude")
+	original := scratch.Read(t, exclude)
+	selection := Selection{Root: root, Project: "project", Target: project, Sources: []config.Source{{Name: "source", Path: source, Glob: "**/*"}}}
+
+	// The second target does not exist, so the start fails after the first
+	// target was prepared and its exclusions were written.
+	if err := runProject(context.Background(), selection, []string{project, filepath.Join(root, "missing")}); err == nil {
+		t.Fatal("missing target accepted")
+	}
+
+	if got := scratch.Read(t, exclude); !bytes.Equal(got, original) {
+		t.Errorf("exclude file after a failed start:\n%s\nwant it restored to:\n%s", got, original)
+	}
+	state, err := registry.Read(root, "project")
+	if err != nil || state.Version != 0 {
+		t.Fatalf("registry after a failed start: %+v, %v; want no record", state, err)
 	}
 }

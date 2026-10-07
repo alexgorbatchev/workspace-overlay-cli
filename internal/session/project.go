@@ -40,16 +40,22 @@ type projectRunner struct {
 	primary    *gitexclude.File
 }
 
+// discard releases a plan that is not being served: it removes the plan's Git
+// exclusions, forgets its record once those are gone, and closes its handles.
+func (plan mountPlan) discard(records *registry.Registry) error {
+	err := plan.view.Exclude().Close()
+	if err == nil {
+		err = records.Forget(plan.target)
+	}
+	plan.view.Close()
+	return err
+}
+
 func preparePlan(ctx context.Context, selection Selection, target string, template *gitexclude.File, records *registry.Registry) (plan mountPlan, result error) {
 	plan = mountPlan{target: target, sources: selection.Sources, view: &overlayfs.View{}}
 	defer func() {
 		if result != nil {
-			cleanup := plan.view.Exclude().Close()
-			if cleanup == nil {
-				cleanup = records.Forget(target)
-			}
-			result = errors.Join(result, cleanup)
-			plan.view.Close()
+			result = errors.Join(result, plan.discard(records))
 		}
 	}()
 	backing, err := os.OpenRoot(target)
@@ -116,12 +122,7 @@ func runProject(ctx context.Context, selection Selection, targets []string) (res
 	var plans []mountPlan
 	defer func() {
 		for _, plan := range plans {
-			cleanup := plan.view.Exclude().Close()
-			if cleanup == nil {
-				cleanup = records.Forget(plan.target)
-			}
-			result = errors.Join(result, cleanup)
-			plan.view.Close()
+			result = errors.Join(result, plan.discard(records))
 		}
 	}()
 	// Runs before the cleanup above adds its own errors to the result.

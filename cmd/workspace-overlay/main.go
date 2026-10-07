@@ -18,7 +18,7 @@ import (
 //go:embed SKILL.md
 var skill string
 
-var version = "0.1.0-dev"
+var version = "0.1.0"
 
 func main() {
 	if err := run(); err != nil {

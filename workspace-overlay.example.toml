@@ -1,0 +1,29 @@
+version = 1
+
+[defaults]
+collision = "concat"
+write = "most-specific"
+
+[projects.alpha]
+path = "alpha"
+
+[projects.beta]
+path = "beta"
+
+[[overlays]]
+name = "workspace"
+source = ".ai/workspace"
+projects = ["*"]
+glob = "**/*"
+
+[[overlays]]
+name = "beta"
+source = ".ai/beta"
+projects = ["beta"]
+glob = "**/*"
+
+[[overlays]]
+name = "alpha"
+source = ".ai/alpha"
+projects = ["alpha"]
+glob = "**/*"

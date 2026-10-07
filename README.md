@@ -48,6 +48,17 @@ This checkout has no configured release download. Local build and run instructio
 Run from the directory containing `workspace-overlay.toml`, with the executable on `PATH`:
 
 ```sh
+# Check the selected project before mounting.
+workspace-overlay overlay status --project alpha --worktrees=false
+```
+
+Sample Output when the project is stopped:
+
+```text
+unmounted
+```
+
+```sh
 # Serve all configured projects and worktrees in the foreground.
 workspace-overlay overlay mount
 ```
@@ -55,19 +66,11 @@ workspace-overlay overlay mount
 In another terminal in the same workspace:
 
 ```sh
-# Inspect the selected project's registered mounts.
-workspace-overlay overlay status --project alpha --worktrees=false
+# Inspect all registered and recorded mounts.
+workspace-overlay overlay status
 
 # Stop all configured projects and their recorded mounts.
 workspace-overlay overlay unmount
-```
-
-Sample Output from the status command with the sample project's three active mounts:
-
-```text
-fuse.workspace-overlay
-fuse.workspace-overlay
-fuse.workspace-overlay
 ```
 
 For an explicit configuration path or a narrower mount:
@@ -83,7 +86,7 @@ Root options:
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `--help` | `-h` | `false` | Print help for any command. |
-| `--version` | `-v` | `false` | Print the raw build version; local builds report `0.1.0-dev`. |
+| `--version` | `-v` | `false` | Print the raw build version; default builds report `0.1.0`. |
 
 `workspace-overlay overlay` and its commands:
 
@@ -108,6 +111,8 @@ Root options:
 These overlay commands accept no positional arguments. `workspace-overlay help [command]` prints command help. `workspace-overlay skill` accepts no arguments or command-specific flags.
 
 # Configuration
+
+Copy [workspace-overlay.example.toml](workspace-overlay.example.toml) into your workspace as `workspace-overlay.toml`, then adjust its paths and selectors. Create the configured source directories before mounting. All relative paths resolve from the configuration file's directory.
 
 Example `workspace-overlay.toml`:
 

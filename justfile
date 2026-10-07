@@ -1,5 +1,5 @@
 build:
-    go build -o bin/workspace-overlay ./cmd/workspace-overlay
+    go build -trimpath -o bin/workspace-overlay ./cmd/workspace-overlay
 
 dev *args:
     go run ./cmd/workspace-overlay overlay mount --replace {{args}}

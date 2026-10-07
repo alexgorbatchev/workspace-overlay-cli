@@ -3,10 +3,10 @@
 Go FUSE CLI tool that serves layered workspace overlays over project backing directories.
 
 ## Commands
-- Build: `go build -o bin/workspace-overlay ./cmd/workspace-overlay` or `just build`
-- Dev: `just dev [--project name]` (default: all configured projects and worktrees)
-- Stop: `just stop [--project name]`
-- Status: `just status [--project name]`
+- Build: `just build` (writes `bin/workspace-overlay` with source paths removed)
+- Dev: `just dev [--config path] [--project name]` (default: all configured projects and worktrees)
+- Stop: `just stop [--config path] [--project name]`
+- Status: `just status [--config path] [--project name]`
 - Test: `go test -race -cover ./...` or `just test`
 - Lint: `go vet ./... && go mod tidy -diff` or `just lint`
 - Run: `go run ./cmd/workspace-overlay <args>` or `just run <args>`
@@ -15,19 +15,21 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 ## Setup
 - Requires Linux with accessible `/dev/fuse` and `fusermount3` installed.
 - Pre-mount directory handles (`os.OpenRoot`) keep the backing project accessible under the mount.
+- Copy `workspace-overlay.example.toml` into the workspace as `workspace-overlay.toml` and adjust its project and source paths. Runtime configuration and overlay data belong to that workspace.
 
 ## Conventions
 - Command hierarchy uses subject-first noun-verb structure (`workspace-overlay overlay <mount|unmount|status>`).
 - Embedded skill contract: `workspace-overlay skill` prints `cmd/workspace-overlay/SKILL.md` verbatim; keep `SKILL.md` synchronized in the same change as any command, flag, default, environment, output, or side-effect change.
 - Dual-mode output: `AGENT=1` prefixes help screens with `ALERT: Agents must read \`AGENT=1 workspace-overlay skill\` before using this tool.`.
-- Three-layer merge order: project backing bytes (layer 0), shared `.ai/<workspace>` (layer 1), and project `.ai/<project>` (layer 2). Concatenate regular files byte-for-byte; merge directories recursively.
+- Merge project backing bytes first, then matching overlays in TOML declaration order. Concatenate regular files byte-for-byte; merge directories recursively. Put source skills in `.agents/skills/`.
 - Writable overlay: edits persist into the most-specific contributing layer; earlier contributions must remain intact. Atomic editor save-and-rename strips prefix bytes in `prepareSave`.
 - Dynamic Git exclusions: overlay-only files are recorded in `.git/info/exclude` under managed marker blocks using advisory file locks (`syscall.Flock`).
-- Production implementation: configure ordered overlays and projects through `workspace-overlay.toml`; `--config` selects a file, otherwise discover it in ancestors of the current directory.
+- Configure ordered overlays and projects through `workspace-overlay.toml`; `--config` selects a file, otherwise discover it in ancestors of the current directory.
 - Watch Git common metadata and overlay sources through fsnotify using native backing directory handles. Reconcile registered worktrees after debounced events and use a slow fallback scan for missed events.
-- The primary implementation agent owns all test files, including the tests backfilled by another agent; the user explicitly authorized updating them.
-- The user approved fsnotify, go-toml/v2, and doublestar dependencies for this production implementation.
+- The user approved go-fuse/v2, Cobra, cobra-help-tree/v2, fsnotify, go-toml/v2, and doublestar dependencies.
 - Overlay source files and directories cannot be deleted through project or worktree mounts. Preserve ordinary project deletion and writable overlay edits, including atomic editor saves.
+- Keep the repository self-contained; integration tests create temporary projects and worktrees instead of relying on sibling fixtures. `example_config_test.go` exercises the shipped configuration with mounted reads and writes.
+- Keep the CLI checkout at its current location until the user requests relocation.
 
 ## Gotchas
 - Mount replacement: an active overlay requires `--replace` to unmount and remount cleanly; refusing to unmount non-overlay filesystems.

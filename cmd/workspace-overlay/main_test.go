@@ -226,8 +226,8 @@ func TestRunVersion(t *testing.T) {
 		}
 	})
 
-	if out != version+"\n" {
-		t.Errorf("got version output %q, want %q", out, version+"\n")
+	if out != "0.1.0\n" {
+		t.Errorf("got version output %q, want stable version 0.1.0 followed by a newline", out)
 	}
 }
 

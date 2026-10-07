@@ -4,7 +4,7 @@ description: Use when mounting, inspecting, or stopping workspace-overlay and ed
 author: alexgorbatchev
 metadata:
   created_on: 2026-10-06 16:00
-  last_modified: 2026-10-06 21:45
+  last_modified: 2026-10-06 23:18
   status: current
 ---
 
@@ -19,7 +19,7 @@ Run `workspace-overlay overlay mount` in a directory with `workspace-overlay.tom
 - `--replace` (bool, default false): Apply to mount only. Stop selected owners and recover stale registrations before mounting again. Refuse foreign filesystem replacement.
 - `skill`: Print this embedded guide verbatim, offline, without positional arguments or command-specific flags.
 - `help [command]`: Print help for a command path. `--help` / `-h` (bool, default false) prints help on any command. Shell completion generation is disabled.
-- `--version` / `-v` (bool, default false): Apply to the root. Print the raw build version followed by a newline; development builds report `0.1.0-dev`.
+- `--version` / `-v` (bool, default false): Apply to the root. Print the raw build version followed by a newline; default builds report `0.1.0`.
 
 Set `AGENT=1`, `true`, or `yes` for compact help with a skill-reading alert; case and surrounding whitespace are ignored. Send progress and diagnostics to stderr. Abbreviate home paths with `~/`, and the home directory itself with `~`. Errors print `ERR:` and exit 1; successful commands and clean shutdown exit 0.
 
@@ -35,4 +35,4 @@ Watch native Git common metadata and overlay source directories with fsnotify, d
 
 Temporarily add uniquely marked blocks to Git `info/exclude` for selected overlay paths absent from project backing. Keep tracked/backing collisions visible to Git, preserve user entries, and remove each mount's block on shutdown. Worktrees share their repository's exclude file. Record mount targets and exact managed blocks under `<config-directory>/.tmp/workspace-overlay/`; use an advisory owner lock and atomic registry replacement. After forced termination, use `overlay unmount` or `overlay mount --replace` to recover. Retain incomplete cleanup records; changed managed blocks cause an error for manual resolution.
 
-From the sample workspace, run `just dev`, `just status`, and `just stop`; optional flags pass through, for example `just dev --project alpha`. `just dev` supplies `--replace` and defaults to all projects and worktrees.
+From a configured workspace, run `workspace-overlay overlay mount`, inspect it with `workspace-overlay overlay status`, and stop it with `workspace-overlay overlay unmount`. Supply `--project alpha` to select that configured project. From the CLI checkout, use `just dev`, `just status`, and `just stop`; pass `--config` when the workspace configuration is outside the current directory's ancestry. `just dev` supplies `--replace` and defaults to all configured projects and worktrees.

@@ -1,0 +1,45 @@
+# workspace-overlay-cli
+
+Go FUSE CLI tool that serves layered workspace overlays over project backing directories.
+
+## Commands
+- Build: `go build -o bin/workspace-overlay ./cmd/workspace-overlay` or `just build`
+- Dev: `just dev [--project name]` (default: all configured projects and worktrees)
+- Stop: `just stop [--project name]`
+- Status: `just status [--project name]`
+- Test: `go test -race -cover ./...` or `just test`
+- Lint: `go vet ./... && go mod tidy -diff` or `just lint`
+- Run: `go run ./cmd/workspace-overlay <args>` or `just run <args>`
+- Run AI: `AGENT=1 go run ./cmd/workspace-overlay <args>` or `just run-ai <args>`
+
+## Setup
+- Requires Linux with accessible `/dev/fuse` and `fusermount3` installed.
+- Pre-mount directory handles (`os.OpenRoot`) keep the backing project accessible under the mount.
+
+## Conventions
+- Command hierarchy uses subject-first noun-verb structure (`workspace-overlay overlay <mount|unmount|status>`).
+- Embedded skill contract: `workspace-overlay skill` prints `cmd/workspace-overlay/SKILL.md` verbatim; keep `SKILL.md` synchronized in the same change as any command, flag, default, environment, output, or side-effect change.
+- Dual-mode output: `AGENT=1` prefixes help screens with `ALERT: Agents must read \`AGENT=1 workspace-overlay skill\` before using this tool.`.
+- Three-layer merge order: project backing bytes (layer 0), shared `.ai/<workspace>` (layer 1), and project `.ai/<project>` (layer 2). Concatenate regular files byte-for-byte; merge directories recursively.
+- Writable overlay: edits persist into the most-specific contributing layer; earlier contributions must remain intact. Atomic editor save-and-rename strips prefix bytes in `prepareSave`.
+- Dynamic Git exclusions: overlay-only files are recorded in `.git/info/exclude` under managed marker blocks using advisory file locks (`syscall.Flock`).
+- Production implementation: configure ordered overlays and projects through `workspace-overlay.toml`; `--config` selects a file, otherwise discover it in ancestors of the current directory.
+- Watch Git common metadata and overlay sources through fsnotify using native backing directory handles. Reconcile registered worktrees after debounced events and use a slow fallback scan for missed events.
+- The primary implementation agent owns all test files, including the tests backfilled by another agent; the user explicitly authorized updating them.
+- The user approved fsnotify, go-toml/v2, and doublestar dependencies for this production implementation.
+- Overlay source files and directories cannot be deleted through project or worktree mounts. Preserve ordinary project deletion and writable overlay edits, including atomic editor saves.
+
+## Gotchas
+- Mount replacement: an active overlay requires `--replace` to unmount and remount cleanly; refusing to unmount non-overlay filesystems.
+- Worktrees share Git metadata: all backing and Git exclude handles are opened before mounting any target.
+- Worktrees use the original configured overlay sources; do not create per-worktree `.ai` symlinks.
+- Home directory paths: paths inside `~` are abbreviated with `~/` in status and mount output.
+
+## Boundaries
+- Always: automatically record all new instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
+- Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% code coverage is required (scripts/ folder is excluded from this rule)
+- Always: keep `cmd/workspace-overlay/SKILL.md` synchronized in the same change as any CLI command, flag, default, environment, output, or side-effect change
+- Ask first: modifying FUSE options, external dependency changes, or adding root flags
+- Never: publish releases, tags, packages, or production deployments automatically without explicit user authorization
+- Never: unmount non-overlay filesystems (`fuse.workspace-overlay` only)
+- Never: commit compiled binaries in `bin/`

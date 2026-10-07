@@ -9,7 +9,6 @@ import (
 	"io"
 	iofs "io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -19,10 +18,12 @@ import (
 
 // Keep a pre-mount handle: opening .git through the mounted filesystem would recurse.
 type gitExclude struct {
-	mu     sync.Mutex
-	root   *os.Root
-	marker string
-	block  []byte
+	mu       sync.Mutex
+	root     *os.Root
+	file     string
+	onUpdate func([]byte) error
+	marker   string
+	block    []byte
 }
 
 func openExclude(ctx context.Context, project string) (*gitExclude, error) {
@@ -31,7 +32,7 @@ func openExclude(ctx context.Context, project string) (*gitExclude, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", project, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude")
+	cmd := projectGit(ctx, project, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude")
 	data, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("locate Git exclude file: %w", err)
@@ -44,7 +45,7 @@ func openExclude(ctx context.Context, project string) (*gitExclude, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &gitExclude{root: root, marker: fmt.Sprintf("workspace-overlay %x", rand.Text())}, nil
+	return &gitExclude{root: root, file: name, marker: fmt.Sprintf("workspace-overlay %x", rand.Text())}, nil
 }
 
 func (v *view) refreshExclude() error {
@@ -58,6 +59,12 @@ func (v *view) refreshExclude() error {
 				return err
 			}
 			if name == "." {
+				return nil
+			}
+			if !layer.includes(name) {
+				if entry.IsDir() {
+					return iofs.SkipDir
+				}
 				return nil
 			}
 			if name == ".git" {
@@ -141,7 +148,24 @@ func (g *gitExclude) update(patterns []string) error {
 		return err
 	}
 	g.block = block
-	return f.Sync()
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if g.onUpdate != nil {
+		return g.onUpdate(block)
+	}
+	return nil
+}
+
+func (g *gitExclude) clone() (*gitExclude, error) {
+	if g == nil {
+		return nil, nil
+	}
+	root, err := g.root.OpenRoot(".")
+	if err != nil {
+		return nil, err
+	}
+	return &gitExclude{root: root, file: g.file, marker: fmt.Sprintf("workspace-overlay %x", rand.Text())}, nil
 }
 
 func (g *gitExclude) close() error {

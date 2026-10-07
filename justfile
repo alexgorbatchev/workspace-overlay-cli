@@ -1,20 +1,25 @@
 build:
     go build -o bin/workspace-overlay ./cmd/workspace-overlay
 
-dev project="alpha":
-    go run ./cmd/workspace-overlay overlay mount --replace --project {{quote(project)}}
+dev *args:
+    go run ./cmd/workspace-overlay overlay mount --replace {{args}}
 
-stop project="alpha":
-    go run ./cmd/workspace-overlay overlay unmount --project {{quote(project)}}
+stop *args:
+    go run ./cmd/workspace-overlay overlay unmount {{args}}
 
-status project="alpha":
-    go run ./cmd/workspace-overlay overlay status --project {{quote(project)}}
+status *args:
+    go run ./cmd/workspace-overlay overlay status {{args}}
 
 run *args:
     go run ./cmd/workspace-overlay {{args}}
 
 run-ai *args:
     AGENT=1 go run ./cmd/workspace-overlay {{args}}
+
+test:
+    @mkdir -p .tmp
+    go test -race -coverprofile=.tmp/coverage.out ./...
+    @awk 'NR > 1 { total += $(NF-1); if ($NF > 0) covered += $(NF-1) } END { coverage = 100 * covered / total; printf "Coverage: %.2f%%\n", coverage; exit(coverage < 90) }' .tmp/coverage.out
 
 lint:
     go vet ./...

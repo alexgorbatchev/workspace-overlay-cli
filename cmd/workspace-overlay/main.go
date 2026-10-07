@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -17,6 +18,8 @@ import (
 //go:embed SKILL.md
 var skill string
 
+var version = "0.1.0-dev"
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "ERR:", err)
@@ -25,7 +28,7 @@ func main() {
 }
 
 func run() error {
-	root := &cobra.Command{Use: "workspace-overlay", Short: "Serve agent files from a workspace source", Version: "poc", SilenceErrors: true}
+	root := &cobra.Command{Use: "workspace-overlay", Short: "Serve agent files from a workspace source", Version: version, SilenceErrors: true}
 	root.SetVersionTemplate("{{.Version}}\n")
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.RunE = func(cmd *cobra.Command, args []string) error { return cmd.Help() }
@@ -33,51 +36,35 @@ func run() error {
 		_, err := fmt.Fprint(cmd.OutOrStdout(), skill)
 		return err
 	}})
-	var workspaceRoot, workspace, project string
-	const defaultRoot = ".."
-	const defaultWorkspace = "workspace"
-	const defaultProject = "alpha"
+	var configFile, project string
 	var replace bool
-	mount := &cobra.Command{Use: "mount", Short: "Serve the merged project until interrupted", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
-		mountpoint, err := projectPath(workspaceRoot, project)
-		if err != nil {
-			return err
-		}
-		if replace {
-			if err := unmountOverlay(cmd.Context(), mountpoint); err != nil {
-				return err
-			}
-		}
-		return serve(cmd.Context(), workspaceRoot, workspace, project)
-	}}
-	mount.Flags().BoolVar(&replace, "replace", false, "Unmount an existing overlay before starting")
-	mount.Flags().StringVar(&workspaceRoot, "root", defaultRoot, "Workspace directory (relative to current directory)")
-	mount.Flags().StringVar(&workspace, "workspace", defaultWorkspace, "Shared layer name under .ai")
-	mount.Flags().StringVar(&project, "project", defaultProject, "Project directory and layer name")
-	overlay := &cobra.Command{Use: "overlay", Short: "Manage the virtual agent directory"}
-	overlay.AddCommand(mount)
-	for _, action := range []string{"unmount", "status"} {
-		var targetRoot, targetProject string
-		command := &cobra.Command{Use: action, Short: action + " the agent directory", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
-			target, err := projectPath(targetRoot, targetProject)
+	overlay := &cobra.Command{Use: "overlay", Short: "Manage configured project overlays"}
+	overlay.PersistentFlags().StringVar(&configFile, "config", "", "TOML file (default: discover workspace-overlay.toml in current or parent directories)")
+	overlay.PersistentFlags().StringVar(&project, "project", "", "Configured project name (default: all projects)")
+	for _, action := range []string{"mount", "unmount", "status"} {
+		var worktrees bool
+		command := &cobra.Command{Use: action, Short: action + " configured project overlays", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+			config, err := loadConfig(configFile)
 			if err != nil {
 				return err
 			}
-			if action == "unmount" {
-				return unmountOverlay(cmd.Context(), target)
-			}
-			kind, err := mountedType(cmd.Context(), target)
+			selections, err := config.selections(project, replace, worktrees)
 			if err != nil {
 				return err
 			}
-			if kind == "" {
-				kind = "unmounted"
+			if action == "mount" {
+				return mountSelections(cmd.Context(), selections)
 			}
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), kind)
-			return err
+			var result error
+			for _, selection := range selections {
+				result = errors.Join(result, manageProjects(cmd.Context(), cmd.OutOrStdout(), action, selection))
+			}
+			return result
 		}}
-		command.Flags().StringVar(&targetRoot, "root", defaultRoot, "Workspace directory (relative to current directory)")
-		command.Flags().StringVar(&targetProject, "project", defaultProject, "Project directory to inspect or unmount")
+		command.Flags().BoolVar(&worktrees, "worktrees", true, "Include and monitor Git worktrees of each project")
+		if action == "mount" {
+			command.Flags().BoolVar(&replace, "replace", false, "Stop existing overlays before starting")
+		}
 		overlay.AddCommand(command)
 	}
 	root.AddCommand(overlay)

@@ -18,18 +18,28 @@ type node struct {
 	path string
 }
 
+func (n *node) relativePath() string {
+	// Before publication and at a subtree root, path identifies the backing location.
+	if n.Operations() == nil || n.IsRoot() {
+		return n.path
+	}
+	// go-fuse updates inode ancestry on rename and hard link operations.
+	root := n.Root()
+	return path.Join(root.Operations().(*node).path, n.Path(root))
+}
+
 func attributes(info os.FileInfo, out *fuse.AttrOut) {
 	out.FromStat(info.Sys().(*syscall.Stat_t))
 }
 
 func (n *node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	child := &node{view: n.view, path: path.Join(n.path, name)}
+	child := &node{view: n.view, path: path.Join(n.relativePath(), name)}
 	var attr fuse.AttrOut
 	if errno := child.Getattr(ctx, nil, &attr); errno != 0 {
 		return nil, errno
 	}
 	out.Attr = attr.Attr
-	stable, err := n.view.stable(child.path)
+	stable, err := n.view.stable(child.relativePath())
 	if err != nil {
 		return nil, fs.ToErrno(err)
 	}
@@ -41,13 +51,13 @@ func (n *node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 		log.Printf("refresh Git exclusions: %v", err)
 		return nil, syscall.EIO
 	}
-	entries, err := n.view.entries(n.path)
+	entries, err := n.view.entries(n.relativePath())
 	if err != nil {
 		return nil, fs.ToErrno(err)
 	}
 	result := make([]fuse.DirEntry, 0, len(entries))
 	for _, entry := range entries {
-		parts, err := n.view.resolve(path.Join(n.path, entry.Name()))
+		parts, err := n.view.resolve(path.Join(n.relativePath(), entry.Name()))
 		if err != nil {
 			return nil, fs.ToErrno(err)
 		}
@@ -61,7 +71,7 @@ func (n *node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 
 func (n *node) Getattr(ctx context.Context, handle fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	// Git inspects its metadata before loading exclusions and enumerating the worktree.
-	if n.path == "." || n.path == ".git" || n.path == ".git/info/exclude" {
+	if n.relativePath() == "." || n.relativePath() == ".git" || n.relativePath() == ".git/info/exclude" {
 		if err := n.view.refreshExclude(); err != nil {
 			log.Printf("refresh Git exclusions: %v", err)
 			return syscall.EIO
@@ -70,16 +80,16 @@ func (n *node) Getattr(ctx context.Context, handle fs.FileHandle, out *fuse.Attr
 	if h, ok := handle.(fs.FileGetattrer); ok {
 		return h.Getattr(ctx, out)
 	}
-	parts, err := n.view.resolve(n.path)
+	parts, err := n.view.resolve(n.relativePath())
 	if err != nil {
 		return fs.ToErrno(err)
 	}
 	info := parts[len(parts)-1].info
 	attributes(info, out)
 	if info.Mode().IsRegular() && (len(parts) > 1 || parts[0].index != 0) {
-		data, err := n.view.contents(n.path, parts)
+		data, err := n.view.contents(n.relativePath(), parts)
 		if err != nil {
-			log.Printf("render %s: %v", n.path, err)
+			log.Printf("render %s: %v", n.relativePath(), err)
 			return syscall.EIO
 		}
 		out.Size = uint64(len(data))
@@ -90,7 +100,7 @@ func (n *node) Getattr(ctx context.Context, handle fs.FileHandle, out *fuse.Attr
 func (n *node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	n.view.mu.Lock()
 	defer n.view.mu.Unlock()
-	parts, err := n.view.resolve(n.path)
+	parts, err := n.view.resolve(n.relativePath())
 	if err != nil {
 		return nil, 0, fs.ToErrno(err)
 	}
@@ -103,7 +113,7 @@ func (n *node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 	}
 	// Ordinary files retain native descriptor semantics, including writes and fsync.
 	if len(parts) == 1 && last.index == 0 {
-		f, err := n.view.layers[0].root.OpenFile(n.path, int(flags&^(syscall.O_APPEND|fuse.FMODE_EXEC)), 0)
+		f, err := n.view.layers[0].root.OpenFile(n.relativePath(), int(flags&^(syscall.O_APPEND|fuse.FMODE_EXEC)), 0)
 		if err != nil {
 			return nil, 0, fs.ToErrno(err)
 		}
@@ -113,10 +123,10 @@ func (n *node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 }
 
 func (n *node) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
-	parts, err := n.view.resolve(n.path)
+	parts, err := n.view.resolve(n.relativePath())
 	if err != nil {
 		return nil, fs.ToErrno(err)
 	}
-	target, err := n.view.layers[parts[len(parts)-1].index].root.Readlink(n.path)
+	target, err := n.view.layers[parts[len(parts)-1].index].root.Readlink(n.relativePath())
 	return []byte(target), fs.ToErrno(err)
 }

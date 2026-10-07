@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -10,6 +11,45 @@ import (
 )
 
 const overlayType = "fuse.workspace-overlay"
+
+func ensureWorktreeIsolation(ctx context.Context, target string, sources []overlaySource) error {
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return err
+	}
+	for _, source := range sources {
+		name, err := filepath.EvalSymlinks(source.path)
+		if err != nil {
+			return err
+		}
+		if containsPath(resolved, name) {
+			return fmt.Errorf("new worktree contains an overlay source: %s", displayPath(target))
+		}
+	}
+	cmd := exec.CommandContext(ctx, "findmnt", "--json", "--list", "--types", overlayType, "--output", "TARGET")
+	data, err := cmd.Output()
+	if err != nil {
+		var exit *exec.ExitError
+		if ctx.Err() == nil && errors.As(err, &exit) && exit.ExitCode() == 1 && len(data) == 0 && len(exit.Stderr) == 0 {
+			return nil
+		}
+		return fmt.Errorf("inspect existing overlay mounts: %w", err)
+	}
+	var result struct {
+		Filesystems []struct {
+			Target string `json:"target"`
+		} `json:"filesystems"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return fmt.Errorf("decode existing overlay mounts: %w", err)
+	}
+	for _, mount := range result.Filesystems {
+		if containsPath(mount.Target, resolved) || containsPath(resolved, mount.Target) {
+			return fmt.Errorf("new worktree overlaps an active mount: %s", displayPath(target))
+		}
+	}
+	return nil
+}
 
 func mountedType(ctx context.Context, target string) (string, error) {
 	target, err := filepath.Abs(target)

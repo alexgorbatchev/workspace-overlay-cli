@@ -9,11 +9,14 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/bmatcuk/doublestar/v4"
+
 	"github.com/hanwen/go-fuse/v2/fs"
 )
 
 type layer struct {
-	root *os.Root
+	root  *os.Root
+	rules *pathRules
 }
 
 type view struct {
@@ -23,11 +26,17 @@ type view struct {
 	idMu       sync.Mutex
 	identities map[identity]uint64
 	nextID     uint64
+	created    map[identity]bool
 }
 
 type identity struct {
 	layer         int
 	device, inode uint64
+}
+
+func fileIdentity(index int, info os.FileInfo) identity {
+	stat := info.Sys().(*syscall.Stat_t)
+	return identity{layer: index, device: uint64(stat.Dev), inode: stat.Ino}
 }
 
 func (v *view) stable(name string) (fs.StableAttr, error) {
@@ -37,7 +46,7 @@ func (v *view) stable(name string) (fs.StableAttr, error) {
 	}
 	last := parts[len(parts)-1]
 	stat := last.info.Sys().(*syscall.Stat_t)
-	key := identity{layer: last.index, device: uint64(stat.Dev), inode: stat.Ino}
+	key := fileIdentity(last.index, last.info)
 	v.idMu.Lock()
 	defer v.idMu.Unlock()
 	if v.identities == nil {
@@ -69,6 +78,9 @@ func (v *view) close() {
 func (v *view) resolve(name string) ([]contribution, error) {
 	var result []contribution
 	for i, layer := range v.layers {
+		if i > 0 && (gitMetadata(name) || !layer.includes(name)) {
+			continue
+		}
 		info, err := layer.root.Lstat(name)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -117,6 +129,10 @@ func (v *view) entries(name string) ([]os.DirEntry, error) {
 			return nil, err
 		}
 		for _, entry := range entries {
+			child := path.Join(name, entry.Name())
+			if part.index > 0 && (gitMetadata(child) || !v.layers[part.index].includes(child)) {
+				continue
+			}
 			names[entry.Name()] = entry
 		}
 	}
@@ -145,5 +161,15 @@ func (v *view) destination(name string) (int, error) {
 	if parents[0].index == 0 {
 		return 0, nil
 	}
-	return parents[len(parents)-1].index, nil
+	index := parents[len(parents)-1].index
+	if rules := v.layers[index].rules; rules != nil {
+		matches, err := doublestar.Match(rules.glob, name)
+		if err != nil {
+			return 0, err
+		}
+		if !matches {
+			return 0, syscall.EPERM
+		}
+	}
+	return index, nil
 }

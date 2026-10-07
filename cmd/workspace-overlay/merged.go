@@ -24,17 +24,17 @@ type mergedFile struct {
 }
 
 func (n *node) openMerged(ctx context.Context, flags uint32, parts []contribution) (fs.FileHandle, uint32, syscall.Errno) {
-	data, err := n.view.contents(n.path, parts)
+	data, err := n.view.contents(n.relativePath(), parts)
 	if err != nil {
-		log.Printf("render %s: %v", n.path, err)
+		log.Printf("render %s: %v", n.relativePath(), err)
 		return nil, 0, syscall.EIO
 	}
-	prefix, err := n.view.contents(n.path, parts[:len(parts)-1])
+	prefix, err := n.view.contents(n.relativePath(), parts[:len(parts)-1])
 	if err != nil {
 		return nil, 0, fs.ToErrno(err)
 	}
 	last := parts[len(parts)-1]
-	f, err := n.view.layers[last.index].root.OpenFile(n.path, int(flags&^(syscall.O_TRUNC|syscall.O_APPEND|fuse.FMODE_EXEC)), 0)
+	f, err := n.view.layers[last.index].root.OpenFile(n.relativePath(), int(flags&^(syscall.O_TRUNC|syscall.O_APPEND|fuse.FMODE_EXEC)), 0)
 	if err != nil {
 		return nil, 0, fs.ToErrno(err)
 	}
@@ -45,7 +45,7 @@ func (n *node) openMerged(ctx context.Context, flags uint32, parts []contributio
 		h.data = nil
 		h.dirty = true
 	}
-	log.Printf("resolved %s (%d layers, %d bytes)", n.path, len(parts), len(data))
+	log.Printf("resolved %s (%d layers, %d bytes)", n.relativePath(), len(parts), len(data))
 	return h, fuse.FOPEN_DIRECT_IO, 0
 }
 

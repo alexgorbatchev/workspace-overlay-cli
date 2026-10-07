@@ -62,7 +62,6 @@ func TestStartupSkipsNestedWorktree(t *testing.T) {
 		}
 	}
 
-	// Assert the nested worktree is not a mount of its own
 	kind, err := mountedType(context.Background(), filepath.Join(project, "nested"))
 	if err != nil {
 		t.Fatalf("check nested mount: %v", err)
@@ -71,7 +70,6 @@ func TestStartupSkipsNestedWorktree(t *testing.T) {
 		t.Fatalf("nested worktree should not be mounted, got %q", kind)
 	}
 
-	// Cancel and expect a nil result within 5 seconds
 	cancel()
 	select {
 	case err := <-finished:
@@ -86,32 +84,22 @@ func TestStartupSkipsNestedWorktree(t *testing.T) {
 }
 
 func TestUnsupportedWorktreeFunction(t *testing.T) {
-	// Test the unsupportedWorktree function directly
 	accepted := []string{"/tmp/project", "/tmp/other"}
-	sources := []string{"/tmp/source"}
-
-	// Case 1: worktree overlaps with accepted target (child of accepted)
-	result := unsupportedWorktree("/tmp/project/nested", accepted, sources)
-	if result == "" {
-		t.Error("expected overlap detection for nested worktree")
+	tests := []struct {
+		worktree    string
+		source      string
+		unsupported bool
+	}{
+		{"/tmp/project/nested", "/tmp/source", true},      // inside an accepted target
+		{"/tmp", "/tmp/source", true},                     // contains an accepted target
+		{"/tmp/container", "/tmp/container/source", true}, // contains an overlay source
+		{"/tmp/valid/worktree", "/tmp/source", false},
 	}
-
-	// Case 2: worktree overlaps with accepted target (parent of accepted)
-	result = unsupportedWorktree("/tmp", accepted, sources)
-	if result == "" {
-		t.Error("expected overlap detection for parent worktree")
-	}
-
-	// Case 3: worktree contains an overlay source
-	result = unsupportedWorktree("/tmp/container", accepted, []string{"/tmp/container/source"})
-	if result == "" {
-		t.Error("expected source containment detection")
-	}
-
-	// Case 4: valid worktree
-	result = unsupportedWorktree("/tmp/valid/worktree", accepted, sources)
-	if result != "" {
-		t.Errorf("expected valid worktree, got reason: %s", result)
+	for _, tt := range tests {
+		reason := unsupportedWorktree(tt.worktree, accepted, []string{tt.source})
+		if (reason != "") != tt.unsupported {
+			t.Errorf("unsupportedWorktree(%q) = %q, want unsupported=%v", tt.worktree, reason, tt.unsupported)
+		}
 	}
 }
 
@@ -133,7 +121,6 @@ func TestUnsupportedWorktreeOverlapsDuringReconcile(t *testing.T) {
 
 	waitMount(t, project, overlayfs.FilesystemType)
 
-	// Create a worktree that overlaps with the project mount
 	nestedPath := filepath.Join(project, "nested-overlap")
 	cmd := exec.Command("git", "-C", project, "worktree", "add", "-b", "nested-overlap", nestedPath, "HEAD")
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -157,5 +144,6 @@ func TestUnsupportedWorktreeOverlapsDuringReconcile(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("mountProjects did not stop")
 	}
+
 	waitMount(t, project, "")
 }

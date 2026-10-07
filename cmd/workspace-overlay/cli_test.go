@@ -12,8 +12,7 @@ import (
 
 func TestRuntimeErrorOmitsUsage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	missing := filepath.Join(t.TempDir(), "missing.toml")
-	if err := run([]string{"overlay", "status", "--config", missing}, &stdout, &stderr); err == nil {
+	if err := run([]string{"overlay", "status", "--config", filepath.Join(t.TempDir(), "missing.toml")}, &stdout, &stderr); err == nil {
 		t.Fatal("missing configuration accepted")
 	}
 	if output := stdout.String() + stderr.String(); strings.Contains(output, "Usage:") {

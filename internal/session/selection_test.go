@@ -26,7 +26,6 @@ projects=["*"]
 		t.Fatal(err)
 	}
 
-	// Test with all projects, replace=true, worktrees=true
 	mounts, err := Selections(cfg, "", true, true)
 	if err != nil {
 		t.Fatalf("selected with all projects failed: %v", err)
@@ -34,6 +33,7 @@ projects=["*"]
 	if len(mounts) != 2 {
 		t.Fatalf("expected 2 mounts, got %d", len(mounts))
 	}
+
 	configSelections, err := cfg.Selections("")
 	if err != nil {
 		t.Fatalf("cfg.Selections failed: %v", err)
@@ -64,7 +64,6 @@ projects=["*"]
 		}
 	}
 
-	// Test with single project, replace=false, worktrees=false
 	mounts, err = Selections(cfg, "beta", false, false)
 	if err != nil {
 		t.Fatalf("selected with single project failed: %v", err)
@@ -76,7 +75,6 @@ projects=["*"]
 		t.Fatalf("single selection mismatch: %+v", mounts[0])
 	}
 
-	// Test with missing project
 	mounts, err = Selections(cfg, "missing", false, false)
 	if err == nil {
 		t.Fatalf("expected error for missing project, got nil")

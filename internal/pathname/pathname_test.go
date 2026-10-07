@@ -75,42 +75,15 @@ func TestContains(t *testing.T) {
 		child  string
 		want   bool
 	}{
-		{
-			name:   "same path",
-			parent: "/a/b",
-			child:  "/a/b",
-			want:   true,
-		},
-		{
-			name:   "child beneath parent",
-			parent: "/a/b",
-			child:  "/a/b/c",
-			want:   true,
-		},
-		{
-			name:   "parent of child",
-			parent: "/a/b/c",
-			child:  "/a/b",
-			want:   false,
-		},
-		{
-			name:   "sibling with name prefix",
-			parent: "/a/b",
-			child:  "/a/bc",
-			want:   false,
-		},
-		{
-			name:   "relative path",
-			parent: "/a/b",
-			child:  "../c",
-			want:   false,
-		},
+		{"same path", "/a/b", "/a/b", true},
+		{"child beneath parent", "/a/b", "/a/b/c", true},
+		{"parent of child", "/a/b/c", "/a/b", false},
+		{"sibling with name prefix", "/a/b", "/a/bc", false},
+		{"relative path", "/a/b", "../c", false},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Contains(tt.parent, tt.child)
-			if got != tt.want {
+			if got := Contains(tt.parent, tt.child); got != tt.want {
 				t.Errorf("Contains(%q, %q) = %v, want %v", tt.parent, tt.child, got, tt.want)
 			}
 		})
@@ -122,24 +95,17 @@ func TestCanonical(t *testing.T) {
 		tmpdir := t.TempDir()
 		target := filepath.Join(tmpdir, "target")
 		scratch.Write(t, target, "content")
-
 		link := filepath.Join(tmpdir, "link")
 		if err := os.Symlink(target, link); err != nil {
 			t.Fatal(err)
 		}
-
-		got := Canonical(link)
-		want := target
-		if got != want {
-			t.Errorf("Canonical(%q) = %q, want %q", link, got, want)
+		if got := Canonical(link); got != target {
+			t.Errorf("Canonical(%q) = %q, want %q", link, got, target)
 		}
 	})
-
 	t.Run("nonexistent path is cleaned", func(t *testing.T) {
-		got := Canonical("/a/../b")
-		want := "/b"
-		if got != want {
-			t.Errorf("Canonical(%q) = %q, want %q", "/a/../b", got, want)
+		if got := Canonical("/a/../b"); got != "/b" {
+			t.Errorf("Canonical(%q) = %q, want %q", "/a/../b", got, "/b")
 		}
 	})
 }

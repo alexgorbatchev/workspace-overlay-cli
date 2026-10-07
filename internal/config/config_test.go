@@ -232,20 +232,17 @@ func TestProjectPath(t *testing.T) {
 }
 
 func TestSymlinkedConfigResolvesToRealTarget(t *testing.T) {
-	root := t.TempDir()
-	resolved, err := filepath.EvalSymlinks(root)
+	resolved, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	workspace := filepath.Join(resolved, "real")
 	scratch.GitRepo(t, filepath.Join(workspace, "project"))
 	scratch.Write(t, filepath.Join(workspace, Name), "version=1\n[projects.project]\npath='project'\n")
-
 	alias := filepath.Join(resolved, "alias")
 	if err := os.Symlink(workspace, alias); err != nil {
 		t.Fatal(err)
 	}
-
 	cfg, err := Load(filepath.Join(alias, Name))
 	if err != nil {
 		t.Fatal(err)

@@ -22,6 +22,7 @@ func setupTestRefreshNode(t *testing.T, withExclude bool) (*node, string, string
 	if err := root.view.RefreshPaths(); err != nil {
 		t.Fatal(err)
 	}
+
 	if withExclude {
 		scratch.GitRepo(t, base)
 		g, err := gitexclude.Open(context.Background(), base)
@@ -40,24 +41,21 @@ func setupTestRefreshNode(t *testing.T, withExclude bool) (*node, string, string
 
 func TestProjectMutationDoesNotReindexOverlays(t *testing.T) {
 	root, _, _ := setupTestRefreshNode(t, false)
-	ctx := context.Background()
 	root.view.layers[1].rules.glob = "["
 	var out fuse.EntryOut
+	ctx := context.Background()
 	_, _, _, errno := root.Create(ctx, "project.txt", syscall.O_RDWR, 0644, &out)
 	if errno != 0 {
 		t.Fatalf("Create project.txt: got errno %v, want 0", errno)
 	}
-
 	_, errno = root.Mkdir(ctx, "builddir", 0755, &out)
 	if errno != 0 {
 		t.Fatalf("Mkdir builddir: got errno %v, want 0", errno)
 	}
-
 	errno = root.Unlink(ctx, "project.txt")
 	if errno != 0 {
 		t.Fatalf("Unlink project.txt: got errno %v, want 0", errno)
 	}
-
 	errno = root.Rmdir(ctx, "builddir")
 	if errno != 0 {
 		t.Fatalf("Rmdir builddir: got errno %v, want 0", errno)
@@ -66,15 +64,14 @@ func TestProjectMutationDoesNotReindexOverlays(t *testing.T) {
 
 func TestOverlayMutationStillReindexes(t *testing.T) {
 	root, _, _ := setupTestRefreshNode(t, false)
-	ctx := context.Background()
 	dir := &node{view: root.view, path: "docs"}
 	fs.NewNodeFS(dir, nil)
 	var out fuse.EntryOut
+	ctx := context.Background()
 	_, _, _, errno := dir.Create(ctx, "new.md", syscall.O_RDWR, 0644, &out)
 	if errno != 0 {
 		t.Fatalf("Create new.md: got errno %v, want 0", errno)
 	}
-
 	_, err := root.view.resolve("docs/new.md")
 	if err != nil {
 		t.Fatalf("resolve docs/new.md: %v", err)
@@ -83,21 +80,18 @@ func TestOverlayMutationStillReindexes(t *testing.T) {
 
 func TestExclusionsAreNotRecomputedWhenNothingChanged(t *testing.T) {
 	root, _, _ := setupTestRefreshNode(t, true)
-	ctx := context.Background()
 	exclude := &node{view: root.view, path: ".git/info/exclude"}
 	var attrOut fuse.AttrOut
+	ctx := context.Background()
 	if errno := exclude.Getattr(ctx, nil, &attrOut); errno != 0 {
 		t.Fatalf("Getattr exclude: got errno %v, want 0", errno)
 	}
-
 	if err := root.view.layers[1].root.Close(); err != nil {
 		t.Fatal(err)
 	}
-
 	if errno := exclude.Getattr(ctx, nil, &attrOut); errno != 0 {
 		t.Fatalf("Getattr exclude after close: got errno %v, want 0", errno)
 	}
-
 	if err := root.view.RefreshPaths(); err == nil {
 		t.Fatal("refreshPaths with closed layer: expected error, got nil")
 	}
@@ -109,9 +103,8 @@ func TestProjectFileCreatedWhereOverlayHasSamePath(t *testing.T) {
 	if err := root.view.RefreshPaths(); err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
 	var out fuse.EntryOut
-	_, _, _, errno := root.Create(ctx, "conflict.txt", syscall.O_RDWR, 0644, &out)
+	_, _, _, errno := root.Create(context.Background(), "conflict.txt", syscall.O_RDWR, 0644, &out)
 	if errno == 0 {
 		t.Fatalf("Create conflicting file: got errno 0, want error")
 	}
@@ -156,9 +149,8 @@ func TestChangedDetectsOverlayInProject(t *testing.T) {
 	if err := root.view.RefreshPaths(); err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
 	var out fuse.EntryOut
-	_, _, _, errno := root.Create(ctx, "overlay.txt", syscall.O_RDWR, 0644, &out)
+	_, _, _, errno := root.Create(context.Background(), "overlay.txt", syscall.O_RDWR, 0644, &out)
 	if errno == 0 {
 		t.Fatalf("Create overlay.txt when it exists in overlay: got errno 0, want error")
 	}

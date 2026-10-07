@@ -28,22 +28,22 @@ func TestRegistryLivesInStateHome(t *testing.T) {
 	if err := r.Record(filepath.Join(root, "project"), "", nil); err != nil {
 		t.Fatal(err)
 	}
-	// Assert r.File() has the prefix filepath.Join(state, "workspace-overlay")
+
 	prefix := filepath.Join(state, "workspace-overlay") + string(filepath.Separator)
 	if !filepath.HasPrefix(r.File(), prefix) {
 		t.Fatalf("r.File() %q does not have prefix %q", r.File(), prefix)
 	}
-	// Assert the file exists
+
 	if _, err := os.Stat(r.File()); err != nil {
 		t.Fatalf("r.File() does not exist: %v", err)
 	}
-	// Assert .tmp directory is NOT created under root
-	if _, err := os.Stat(filepath.Join(root, ".tmp")); !os.IsNotExist(err) {
-		if err == nil {
-			t.Fatal(".tmp directory should not exist under root")
-		}
+
+	if _, err := os.Stat(filepath.Join(root, ".tmp")); err == nil {
+		t.Fatal(".tmp directory should not exist under root")
+	} else if !os.IsNotExist(err) {
 		t.Fatalf("unexpected error checking .tmp: %v", err)
 	}
+
 	if err := r.Forget(filepath.Join(root, "project")); err != nil {
 		t.Fatal(err)
 	}
@@ -69,11 +69,12 @@ func TestStateHomeDefaultsToHomeDirectory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Assert r.File() has the prefix filepath.Join(home, ".local", "state", "workspace-overlay")
+
 			prefix := filepath.Join(home, ".local", "state", "workspace-overlay") + string(filepath.Separator)
 			if !filepath.HasPrefix(r.File(), prefix) {
 				t.Fatalf("r.File() %q does not have prefix %q", r.File(), prefix)
 			}
+
 			if err := r.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -94,9 +95,11 @@ func TestSameProjectNameInTwoWorkspaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if r1.File() == r2.File() {
 		t.Fatalf("same project name in different workspaces should have different file paths: %q == %q", r1.File(), r2.File())
 	}
+
 	if err := r1.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +113,6 @@ func TestRegistryRejectsOtherWorkspace(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", state)
 	rootA := t.TempDir()
 	rootB := t.TempDir()
-
-	// Create a registry for rootA
 	r, err := Open(rootA, "project")
 	if err != nil {
 		t.Fatal(err)
@@ -132,12 +133,10 @@ func TestRegistryRejectsOtherWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Try to read the registry with rootA should fail
 	if _, err := Read(rootA, "project"); err == nil {
 		t.Fatal("registry with different root should be rejected")
 	}
 
-	// Cleanup
 	if err := os.Remove(r.File()); err != nil {
 		t.Fatal(err)
 	}
@@ -272,6 +271,7 @@ func TestRequestStopReportsMissingOwner(t *testing.T) {
 	if err := r.Record(filepath.Join(root, "project"), "", nil); err != nil {
 		t.Fatal(err)
 	}
+
 	// Model a terminated owner by unlocking without cleaning up
 	r.Unlock()
 
@@ -285,11 +285,11 @@ func TestRequestStopReportsMissingOwner(t *testing.T) {
 	if waited := time.Since(start); waited > time.Second {
 		t.Fatalf("waited %s for an owner that is gone", waited)
 	}
+
 	if _, err := os.Stat(r.StopFile()); !os.IsNotExist(err) {
 		t.Fatalf("stop request left for a missing owner: %v", err)
 	}
 
-	// Cleanup so tests don't leave state
 	r2, err := Acquire(root, "project")
 	if err != nil {
 		t.Fatal(err)

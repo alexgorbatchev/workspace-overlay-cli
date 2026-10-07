@@ -27,6 +27,7 @@ func readCollisionNotice(t *testing.T, child *node, flags uint32) string {
 	if errno != 0 {
 		t.Fatalf("Open returned errno %v", errno)
 	}
+
 	var result []byte
 	for off := int64(0); ; off += 4096 {
 		dest := make([]byte, 4096)
@@ -43,6 +44,7 @@ func readCollisionNotice(t *testing.T, child *node, flags uint32) string {
 		}
 		result = append(result, data...)
 	}
+
 	if rel, ok := h.(fs.FileReleaser); ok {
 		if errno := rel.Release(ctx); errno != 0 {
 			t.Fatalf("Release errno = %v", errno)
@@ -61,7 +63,6 @@ func TestBinaryCollisionServesExplanation(t *testing.T) {
 	child := &node{view: root.view, path: "logo.png"}
 	content := readCollisionNotice(t, child, syscall.O_RDONLY)
 
-	// Verify the content contains expected strings
 	if !strings.Contains(content, "logo.png") {
 		t.Errorf("content missing file name: %q", content)
 	}
@@ -75,7 +76,6 @@ func TestBinaryCollisionServesExplanation(t *testing.T) {
 		t.Errorf("content should not contain binary data: %q", content)
 	}
 
-	// Verify displayPath outputs are in the content
 	basePath := pathname.Display(filepath.Join(base, "logo.png"))
 	sharedPath := pathname.Display(filepath.Join(shared, "logo.png"))
 	if !strings.Contains(content, basePath) {
@@ -91,10 +91,8 @@ func TestBinaryCollisionServesExplanation(t *testing.T) {
 		t.Errorf("content missing (overlay, binary) label: %q", content)
 	}
 
-	// Verify Getattr returns the size of the explanation
-	ctx := context.Background()
 	var out fuse.AttrOut
-	if errno := child.Getattr(ctx, nil, &out); errno != 0 {
+	if errno := child.Getattr(context.Background(), nil, &out); errno != 0 {
 		t.Fatalf("Getattr returned errno %v", errno)
 	}
 	if out.Size != uint64(len(content)) {
@@ -107,10 +105,8 @@ func TestMixedCollisionIsNotMerged(t *testing.T) {
 	binary := "\x00\x01\x02\x03binary"
 	scratch.Write(t, filepath.Join(base, "notes.dat"), "plain notes\n")
 	scratch.Write(t, filepath.Join(shared, "notes.dat"), binary)
-
 	child := &node{view: root.view, path: "notes.dat"}
 	content := readCollisionNotice(t, child, syscall.O_RDONLY)
-
 	if !strings.Contains(content, "(project, text)") {
 		t.Errorf("content missing (project, text) label: %q", content)
 	}
@@ -128,23 +124,19 @@ func TestBinaryCollisionIsReadOnly(t *testing.T) {
 	binary := "\x00\x01\x02\x03binary"
 	scratch.Write(t, filepath.Join(base, "logo.png"), png)
 	scratch.Write(t, filepath.Join(shared, "logo.png"), binary)
-
 	child := &node{view: root.view, path: "logo.png"}
-	ctx := context.Background()
 
-	// Open for writing must still succeed (file is accessible)
+	ctx := context.Background()
 	h, _, errno := child.Open(ctx, syscall.O_RDWR)
 	if errno != 0 {
 		t.Fatalf("Open for read-write returned errno %v", errno)
 	}
 
-	// But writing must be rejected
 	_, writeErrno := h.(fs.FileWriter).Write(ctx, []byte("x"), 0)
 	if writeErrno != syscall.EPERM {
 		t.Errorf("Write errno %v, want EPERM", writeErrno)
 	}
 
-	// And Setattr with size change must be rejected
 	var in fuse.SetAttrIn
 	in.Size = 0
 	in.Valid |= fuse.FATTR_SIZE
@@ -154,14 +146,12 @@ func TestBinaryCollisionIsReadOnly(t *testing.T) {
 		t.Errorf("Setattr errno %v, want EPERM", setattrErrno)
 	}
 
-	// Release the handle
 	if rel, ok := h.(fs.FileReleaser); ok {
 		if errno := rel.Release(ctx); errno != 0 {
 			t.Fatalf("Release returned errno %v", errno)
 		}
 	}
 
-	// Verify source files are unchanged
 	basePath := filepath.Join(base, "logo.png")
 	sharedPath := filepath.Join(shared, "logo.png")
 	if data := scratch.Read(t, basePath); string(data) != png {
@@ -178,16 +168,12 @@ func TestBinaryCollisionIsLogged(t *testing.T) {
 	binary := "\x00\x01\x02\x03binary"
 	scratch.Write(t, filepath.Join(base, "logo.png"), png)
 	scratch.Write(t, filepath.Join(shared, "logo.png"), binary)
-
-	// Redirect logging
 	var buffer bytes.Buffer
 	oldOutput := log.Writer()
 	log.SetOutput(&buffer)
 	t.Cleanup(func() { log.SetOutput(oldOutput) })
-
 	child := &node{view: root.view, path: "logo.png"}
 	readCollisionNotice(t, child, syscall.O_RDONLY)
-
 	logged := buffer.String()
 	if !strings.Contains(logged, "cannot merge logo.png") {
 		t.Errorf("log missing expected message: %q", logged)
@@ -198,11 +184,8 @@ func TestTextCollisionStillConcatenates(t *testing.T) {
 	root, base, shared, _ := setupTestRootNode(t)
 	scratch.Write(t, filepath.Join(base, "doc.md"), "base\n")
 	scratch.Write(t, filepath.Join(shared, "doc.md"), "overlay\n")
-
 	child := &node{view: root.view, path: "doc.md"}
 	content := readCollisionNotice(t, child, syscall.O_RDONLY)
-
-	// Should concatenate, not serve an explanation
 	if content != "base\noverlay\n" {
 		t.Errorf("concatenation returned %q, want %q", content, "base\noverlay\n")
 	}
@@ -212,10 +195,8 @@ func TestSingleBinaryFileIsServedAsIs(t *testing.T) {
 	root, _, shared, _ := setupTestRootNode(t)
 	png := "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
 	scratch.Write(t, filepath.Join(shared, "solo.png"), png)
-
 	child := &node{view: root.view, path: "solo.png"}
 	content := readCollisionNotice(t, child, syscall.O_RDONLY)
-
 	if content != png {
 		t.Errorf("single binary file returned %q, want %q", content, png)
 	}
@@ -232,13 +213,11 @@ func TestEditorSaveCannotReplaceBinaryCollision(t *testing.T) {
 	staged := png + "replacement"
 	scratch.Write(t, filepath.Join(base, "logo.tmp"), staged)
 
-	ctx := context.Background()
-	errno := root.Rename(ctx, "logo.tmp", root, "logo.png", 0)
+	errno := root.Rename(context.Background(), "logo.tmp", root, "logo.png", 0)
 	if errno != syscall.EPERM {
 		t.Errorf("Rename errno %v, want EPERM", errno)
 	}
 
-	// Verify files are unchanged
 	basePath := filepath.Join(base, "logo.png")
 	sharedPath := filepath.Join(shared, "logo.png")
 	if data := scratch.Read(t, basePath); string(data) != png {
@@ -259,18 +238,13 @@ func TestMountedBinaryCollisionReadsAsExplanation(t *testing.T) {
 	if err := os.Mkdir(project, 0755); err != nil {
 		t.Fatal(err)
 	}
-
 	png := "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
 	binary := "\x00\x01\x02\x03binary"
 	scratch.Write(t, filepath.Join(project, "logo.png"), png)
-
 	source := filepath.Join(root, "ai")
 	scratch.Write(t, filepath.Join(source, "logo.png"), binary)
-
-	// Mount the project with the overlay source
 	_ = mountedProject(t, project, source)
 
-	// Read through the mount
 	mountedPath := filepath.Join(project, "logo.png")
 	data, err := os.ReadFile(mountedPath)
 	if err != nil {
@@ -281,7 +255,6 @@ func TestMountedBinaryCollisionReadsAsExplanation(t *testing.T) {
 		t.Errorf("mounted file does not contain explanation: %q", content)
 	}
 
-	// Verify stat reports the size of the explanation
 	info, err := os.Stat(mountedPath)
 	if err != nil {
 		t.Fatalf("Stat through mount: %v", err)
@@ -290,7 +263,6 @@ func TestMountedBinaryCollisionReadsAsExplanation(t *testing.T) {
 		t.Errorf("Stat size %d, want %d", info.Size(), len(content))
 	}
 
-	// Verify write fails
 	// A truncating write is what a shell redirect does; it must be refused with a
 	// permission error, not an I/O error from a failed handler.
 	if err := os.WriteFile(mountedPath, []byte("new"), 0644); !errors.Is(err, syscall.EPERM) {
@@ -300,7 +272,6 @@ func TestMountedBinaryCollisionReadsAsExplanation(t *testing.T) {
 		t.Fatalf("truncate of a binary collision: %v, want a permission error", err)
 	}
 
-	// Verify source files are unchanged
 	sourcePath := filepath.Join(source, "logo.png")
 	if sourceData := scratch.Read(t, sourcePath); string(sourceData) != binary {
 		t.Errorf("source file was modified: %q", string(sourceData))
@@ -327,8 +298,8 @@ func TestEmptyCopyCountsAsText(t *testing.T) {
 	scratch.Write(t, filepath.Join(base, "notes.md"), "")
 	scratch.Write(t, filepath.Join(shared, "notes.md"), "overlay\n")
 	child := &node{view: root.view, path: "notes.md"}
-	if content := readCollisionNotice(t, child, syscall.O_RDONLY); content != "overlay\n" {
-		t.Fatalf("empty project copy joined with overlay text: %q", content)
+	if got := readCollisionNotice(t, child, syscall.O_RDONLY); got != "overlay\n" {
+		t.Fatalf("empty project copy joined with overlay text: %q", got)
 	}
 }
 
@@ -338,6 +309,7 @@ func TestExplanationReadOffsets(t *testing.T) {
 	scratch.Write(t, filepath.Join(base, "logo.png"), binary)
 	scratch.Write(t, filepath.Join(shared, "logo.png"), binary)
 	child := &node{view: root.view, path: "logo.png"}
+
 	whole := readCollisionNotice(t, child, syscall.O_RDONLY)
 	ctx := context.Background()
 	h, _, errno := child.Open(ctx, syscall.O_RDONLY)
@@ -345,6 +317,7 @@ func TestExplanationReadOffsets(t *testing.T) {
 		t.Fatal(errno)
 	}
 	reader := h.(fs.FileReader)
+
 	cases := []struct {
 		name   string
 		offset int64

@@ -20,11 +20,7 @@ func TestMountReportsFilesystemStatistics(t *testing.T) {
 	if err := os.Mkdir(project, 0755); err != nil {
 		t.Fatal(err)
 	}
-
-	// Mount the project without any overlays
 	_ = mountedProject(t, project)
-
-	// Wait for the mount to be ready
 
 	var mounted, backing syscall.Statfs_t
 	if err := syscall.Statfs(project, &mounted); err != nil {
@@ -49,32 +45,23 @@ func TestMetadataChangeOnUnreadableFile(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("test requires non-root user")
 	}
-
 	root, base, _, _ := setupTestRootNode(t)
-	ctx := context.Background()
-
-	// Create a file and make it unreadable (mode 0)
 	lockedPath := filepath.Join(base, "locked.txt")
 	scratch.Write(t, lockedPath, "x")
 	if err := os.Chmod(lockedPath, 0); err != nil {
 		t.Fatal(err)
 	}
 
-	// Create a node for the locked file
 	child := &node{view: root.view, path: "locked.txt"}
-
-	// Try to change the mode to 0644
 	var in fuse.SetAttrIn
 	in.Mode = 0644
 	in.Valid |= fuse.FATTR_MODE
-
 	var out fuse.AttrOut
-	errno := child.Setattr(ctx, nil, &in, &out)
+	errno := child.Setattr(context.Background(), nil, &in, &out)
 	if errno != 0 {
 		t.Fatalf("Setattr chmod errno = %v (want 0)", errno)
 	}
 
-	// Verify the permissions were actually changed
 	info, err := os.Stat(lockedPath)
 	if err != nil {
 		t.Fatal(err)
@@ -86,11 +73,8 @@ func TestMetadataChangeOnUnreadableFile(t *testing.T) {
 
 func TestStatfsOnNodeReturnsBackingStats(t *testing.T) {
 	root, _, _, _ := setupTestRootNode(t)
-	ctx := context.Background()
-
-	// Call Statfs directly on the node
 	var out fuse.StatfsOut
-	errno := root.Statfs(ctx, &out)
+	errno := root.Statfs(context.Background(), &out)
 	if errno != 0 {
 		t.Errorf("Statfs errno = %v (want 0)", errno)
 	}
@@ -104,23 +88,16 @@ func TestStatfsOnNodeReturnsBackingStats(t *testing.T) {
 
 func TestSetattrSizeChangeTakesOpenPath(t *testing.T) {
 	root, baseDir, _, _ := setupTestRootNode(t)
-	ctx := context.Background()
-
 	scratch.Write(t, filepath.Join(baseDir, "truncate.txt"), "this is original content")
 	child := &node{view: root.view, path: "truncate.txt"}
-
-	// Setattr with size change should go through open path
 	var in fuse.SetAttrIn
 	in.Size = 5
 	in.Valid |= fuse.FATTR_SIZE
-
 	var out fuse.AttrOut
-	errno := child.Setattr(ctx, nil, &in, &out)
+	errno := child.Setattr(context.Background(), nil, &in, &out)
 	if errno != 0 {
 		t.Fatalf("Setattr size errno = %v", errno)
 	}
-
-	// Verify truncation worked
 	info, err := os.Stat(filepath.Join(baseDir, "truncate.txt"))
 	if err != nil {
 		t.Fatal(err)
@@ -132,19 +109,14 @@ func TestSetattrSizeChangeTakesOpenPath(t *testing.T) {
 
 func TestReaddirEnumeratesAllLayers(t *testing.T) {
 	root, base, shared, spec := setupTestRootNode(t)
-	ctx := context.Background()
-
-	// Create files in each layer
 	scratch.Write(t, filepath.Join(base, "from_base.txt"), "base")
 	scratch.Write(t, filepath.Join(shared, "from_shared.txt"), "shared")
 	scratch.Write(t, filepath.Join(spec, "from_spec.txt"), "spec")
 
-	// All files should be listed
-	stream, errno := root.Readdir(ctx)
+	stream, errno := root.Readdir(context.Background())
 	if errno != 0 {
 		t.Fatalf("Readdir errno = %v (want 0)", errno)
 	}
-
 	names := make(map[string]bool)
 	for stream.HasNext() {
 		entry, errno := stream.Next()
@@ -167,37 +139,25 @@ func TestReaddirEnumeratesAllLayers(t *testing.T) {
 
 func TestDirectoryWithCollisionStaysListable(t *testing.T) {
 	root, base, shared, _ := setupTestRootNode(t)
-	ctx := context.Background()
-
-	// Create base/sub directory with a file
 	if err := os.MkdirAll(filepath.Join(base, "sub"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	scratch.Write(t, filepath.Join(base, "sub", "ordinary.txt"), "ordinary")
-
-	// Create the collision: base has sub/conflict as a directory
 	if err := os.MkdirAll(filepath.Join(base, "sub", "conflict"), 0755); err != nil {
 		t.Fatal(err)
 	}
-
-	// Shared has sub as a directory (same as base)
 	if err := os.MkdirAll(filepath.Join(shared, "sub"), 0755); err != nil {
 		t.Fatal(err)
 	}
-
-	// Shared has sub/conflict as a FILE (type collision with base's directory)
 	scratch.Write(t, filepath.Join(shared, "sub", "conflict"), "a file where the project has a directory")
 
-	// Create a node for the directory
 	dir := &node{view: root.view, path: "sub"}
 	fs.NewNodeFS(dir, nil)
-
-	// List the directory - should succeed even with collision
+	ctx := context.Background()
 	stream, errno := dir.Readdir(ctx)
 	if errno != 0 {
 		t.Fatalf("Readdir errno = %v (want 0)", errno)
 	}
-
 	modes := make(map[string]uint32)
 	for stream.HasNext() {
 		entry, errno := stream.Next()
@@ -205,6 +165,7 @@ func TestDirectoryWithCollisionStaysListable(t *testing.T) {
 			t.Fatalf("stream.Next errno = %v", errno)
 		}
 		modes[entry.Name] = entry.Mode
+
 	}
 	if modes["ordinary.txt"]&syscall.S_IFMT != syscall.S_IFREG {
 		t.Errorf("ordinary.txt listed with mode %o, want a regular file", modes["ordinary.txt"])
@@ -212,16 +173,13 @@ func TestDirectoryWithCollisionStaysListable(t *testing.T) {
 	// The colliding entry must still carry a Unix file type, not a Go FileMode.
 	if kind := modes["conflict"] & syscall.S_IFMT; kind != syscall.S_IFDIR && kind != syscall.S_IFREG {
 		t.Errorf("conflict listed with mode %o, want a directory or regular file type", modes["conflict"])
-	}
 
-	// However, looking up "conflict" directly should fail with EIO due to type collision
+	}
 	var entryOut fuse.EntryOut
 	_, errno = dir.Lookup(ctx, "conflict", &entryOut)
 	if errno != syscall.EIO {
 		t.Errorf("Lookup conflict errno = %v, want EIO", errno)
 	}
-
-	// Verify the error is indeed a type collision
 	_, err := root.view.resolve(filepath.Join(dir.relativePath(), "conflict"))
 	if err == nil || !errors.Is(err, syscall.EIO) {
 		t.Errorf("resolve conflict expected EIO, got %v", err)

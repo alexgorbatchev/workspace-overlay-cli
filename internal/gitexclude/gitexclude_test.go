@@ -236,54 +236,43 @@ func TestRestoreRemovesRecordedBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-
-	// Capture the block through OnUpdate
 	var recordedBlock []byte
 	f.OnUpdate = func(block []byte) error {
 		recordedBlock = append([]byte(nil), block...)
 		return nil
 	}
-
 	if err := f.Update([]string{"/generated.md"}); err != nil {
 		t.Fatal(err)
 	}
-
 	if len(recordedBlock) == 0 {
 		t.Fatal("OnUpdate was not called")
 	}
 
-	// Restore should remove the recorded block
 	if err := Restore(f.Path(), recordedBlock); err != nil {
 		t.Fatal(err)
 	}
-
-	restored := scratch.Read(t, excludePath)
-	if !bytes.Equal(original, restored) {
+	if restored := scratch.Read(t, excludePath); !bytes.Equal(original, restored) {
 		t.Errorf("restored file differs from original:\noriginal: %q\nrestored: %q", original, restored)
 	}
 
-	// Test error case: edit the block on disk before restore
+	// A block that was edited on disk is no longer ours to remove.
 	f2, err := Open(context.Background(), tmpDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f2.Close()
-
 	f2.OnUpdate = func(block []byte) error {
 		recordedBlock = append([]byte(nil), block...)
 		return nil
 	}
-
 	if err := f2.Update([]string{"/another.md"}); err != nil {
 		t.Fatal(err)
 	}
 
-	// Edit the block on disk
 	content := scratch.Read(t, excludePath)
 	edited := strings.Replace(string(content), "/another.md", "/edited.md", 1)
 	scratch.Write(t, excludePath, edited)
 
-	// Restore with the original block should error
 	err = Restore(f2.Path(), recordedBlock)
 	if err == nil {
 		t.Fatal("Restore should error when block was changed on disk")
@@ -293,15 +282,10 @@ func TestRestoreRemovesRecordedBlock(t *testing.T) {
 	}
 }
 
-// TestGitExcludeUpdateWriteError tests that an exclude file update fails when the Git info directory is read-only,
-// and succeeds once the directory is writable again.
 func TestGitExcludeUpdateWriteError(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
-
 	initGitRepo(t, tmpDir)
-
-	// Open exclude to initialize it
 	ge, err := Open(ctx, tmpDir)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -312,15 +296,12 @@ func TestGitExcludeUpdateWriteError(t *testing.T) {
 		}
 	})
 
+	// Without the file and with a read-only directory the update has nowhere to write.
 	infoDir := filepath.Join(tmpDir, ".git", "info")
 	excludePath := filepath.Join(infoDir, "exclude")
-
-	// Remove the exclude file and make the info directory read-only
-	// so that the next update cannot create/write the exclude file
 	if err := os.Remove(excludePath); err != nil {
 		t.Fatalf("remove exclude file: %v", err)
 	}
-
 	if err := os.Chmod(infoDir, 0555); err != nil {
 		t.Fatal(err)
 	}
@@ -330,19 +311,13 @@ func TestGitExcludeUpdateWriteError(t *testing.T) {
 		}
 	})
 
-	// Try to update - should fail because info dir is read-only
-	err = ge.Update([]string{"/pattern.txt"})
-	if err == nil {
+	if err := ge.Update([]string{"/pattern.txt"}); err == nil {
 		t.Errorf("Update with read-only info dir should fail")
 	}
-
-	// Restore permissions and try again - should succeed
 	if err := os.Chmod(infoDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-
-	err = ge.Update([]string{"/pattern.txt"})
-	if err != nil {
+	if err := ge.Update([]string{"/pattern.txt"}); err != nil {
 		t.Fatalf("Update after restoring permissions failed: %v", err)
 	}
 }

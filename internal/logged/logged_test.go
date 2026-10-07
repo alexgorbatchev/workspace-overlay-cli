@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
@@ -15,28 +16,22 @@ func TestMain(m *testing.M) {
 }
 
 func TestClose(t *testing.T) {
-	tmp := scratch.Write(t, filepath.Join(t.TempDir(), "test-file"), "content")
-	f, err := os.Open(tmp)
+	f, err := os.Open(scratch.Write(t, filepath.Join(t.TempDir(), "test-file"), "content"))
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	// Redirect logger to capture output
 	var buf bytes.Buffer
 	oldOutput := log.Writer()
 	log.SetOutput(&buf)
 	t.Cleanup(func() { log.SetOutput(oldOutput) })
 
-	// Closing an open file should log nothing
 	Close(f)
 	if buf.Len() > 0 {
 		t.Errorf("expected no log output on successful close, got: %s", buf.String())
 	}
-
-	// Closing a second time should log an error
+	// Closing an already closed file fails, which is the failure to log.
 	Close(f)
-	logged := buf.String()
-	if !bytes.Contains([]byte(logged), []byte("close file")) {
-		t.Errorf("expected 'close file' in log, got: %s", logged)
+	if got := buf.String(); !strings.Contains(got, "close file") {
+		t.Errorf("expected 'close file' in log, got: %s", got)
 	}
 }

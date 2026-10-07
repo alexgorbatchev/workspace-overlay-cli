@@ -39,19 +39,16 @@ func TestReplaceRecoversDeadOwner(t *testing.T) {
 	project := filepath.Join(root, "project")
 	scratch.GitRepo(t, project)
 
-	// Create a linked worktree
 	workspaceDir := filepath.Join(root, ".workspaces", "one", "project")
 	cmd := exec.Command("git", "-C", project, "worktree", "add", "-b", "linked", workspaceDir, "HEAD")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("add worktree: %v: %s", err, out)
 	}
 
-	// Create overlay source file
 	aiDir := filepath.Join(root, "ai")
 	overlayFile := filepath.Join(aiDir, "overlay-only.md")
 	scratch.Write(t, overlayFile, "overlay\n")
 
-	// Write config
 	configFile := filepath.Join(root, config.Name)
 	scratch.Write(t, configFile, `version=1
 [projects.project]
@@ -62,7 +59,6 @@ source='ai'
 projects=['*']
 `)
 
-	// Start the owner process
 	cmd = exec.Command(os.Args[0], "-test.run=^TestOwnerProcessHelper$")
 	cmd.Env = append(os.Environ(), "WORKSPACE_OVERLAY_OWNER_CONFIG="+configFile)
 	var output bytes.Buffer
@@ -76,7 +72,6 @@ projects=['*']
 	waitMount(t, project, overlayfs.FilesystemType)
 	waitMount(t, workspaceDir, overlayfs.FilesystemType)
 
-	// Verify the mount is established before killing
 	kind, err := mountedType(context.Background(), project)
 	if err != nil {
 		t.Fatalf("check mount type: %v", err)
@@ -85,7 +80,6 @@ projects=['*']
 		t.Fatalf("expected mount type %s, got %s", overlayfs.FilesystemType, kind)
 	}
 
-	// Kill the owner process
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatalf("kill process: %v", err)
 	}
@@ -100,13 +94,11 @@ projects=['*']
 		t.Fatalf("expected dead mount still visible as %s, got %s", overlayfs.FilesystemType, kind)
 	}
 
-	// Verify accessing the mount fails with ENOTCONN
 	_, err = os.Lstat(filepath.Join(project, ".git"))
 	if err == nil {
 		t.Fatal("expected error accessing dead mount, got nil")
 	}
 
-	// Register cleanup
 	t.Cleanup(func() {
 		for _, target := range []string{project, workspaceDir} {
 			err := unmountOverlay(context.Background(), target)
@@ -116,7 +108,6 @@ projects=['*']
 		}
 	})
 
-	// Test recovery under mount --replace
 	cfg, err := config.Load(configFile)
 	if err != nil {
 		t.Fatalf("load config: %v", err)
@@ -126,7 +117,6 @@ projects=['*']
 		t.Fatalf("get selections: %v", err)
 	}
 
-	// Run mountSelections with a cancellable context
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan error, 1)
 	go func() {
@@ -148,10 +138,8 @@ projects=['*']
 			}
 			success = true
 		case <-ticker.C:
-			// Try to read the overlay file
 			data, err := os.ReadFile(filepath.Join(project, "overlay-only.md"))
 			if err == nil && string(data) == "overlay\n" {
-				// Also check the worktree
 				data2, err2 := os.ReadFile(filepath.Join(workspaceDir, "overlay-only.md"))
 				if err2 == nil && string(data2) == "overlay\n" {
 					success = true
@@ -174,7 +162,6 @@ projects=['*']
 		t.Fatal("mount recovery did not succeed within 10 seconds")
 	}
 
-	// Cancel context and wait for goroutine to exit
 	cancel()
 	select {
 	case <-finished:
@@ -182,11 +169,9 @@ projects=['*']
 		t.Fatal("mountSelections did not exit within timeout after context cancel")
 	}
 
-	// Verify mounts are now clean
 	waitMount(t, project, "")
 	waitMount(t, workspaceDir, "")
 
-	// Verify registry was cleaned
 	state, err := registry.Read(root, "project")
 	if err != nil {
 		t.Fatalf("read registry: %v", err)
@@ -206,12 +191,10 @@ func TestOwnerClearsLeftoverStopRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create a leftover stop file
 	if err := os.WriteFile(stop, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	// Verify stop file exists
 	if _, err := os.Stat(stop); err != nil {
 		t.Fatalf("stop file not created: %v", err)
 	}
@@ -222,7 +205,6 @@ func TestOwnerClearsLeftoverStopRequest(t *testing.T) {
 		t.Fatalf("registry.Open failed: %v", err)
 	}
 
-	// Stop file should now be gone
 	if _, err := os.Stat(stop); !os.IsNotExist(err) {
 		if err != nil {
 			t.Fatalf("stat stop file: %v", err)
@@ -230,7 +212,6 @@ func TestOwnerClearsLeftoverStopRequest(t *testing.T) {
 		t.Fatal("stop file was not removed by registry.Open")
 	}
 
-	// Close the registry
 	if err := r.Close(); err != nil {
 		t.Fatalf("Close registry: %v", err)
 	}
@@ -245,12 +226,10 @@ func TestStopRequestRemovedOnceOwnerIsGone(t *testing.T) {
 		t.Fatalf("registry.Open: %v", err)
 	}
 
-	// Record the target mount
 	if err := r.Record(target, "", nil); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
 
-	// Run stopRegistered in a goroutine
 	finished := make(chan error, 1)
 	go func() {
 		finished <- stopRegistered(context.Background(), root, "project")
@@ -278,12 +257,11 @@ func TestStopRequestRemovedOnceOwnerIsGone(t *testing.T) {
 		}
 	}
 
-	// Now remove the registry file to model an owner that cleaned up but left the stop file
+	// Remove the registry file to model an owner that cleaned up but left the stop file
 	if err := os.Remove(r.File()); err != nil {
 		t.Fatalf("remove registry file: %v", err)
 	}
 
-	// Wait for stopRegistered to finish (should succeed and remove stop file)
 	var stopErr error
 	select {
 	case stopErr = <-finished:
@@ -295,7 +273,6 @@ func TestStopRequestRemovedOnceOwnerIsGone(t *testing.T) {
 		t.Fatalf("stopRegistered returned error: %v", stopErr)
 	}
 
-	// Verify stop file is now gone
 	if _, err := os.Stat(r.StopFile()); !os.IsNotExist(err) {
 		if err != nil {
 			t.Fatalf("stat stop file: %v", err)
@@ -303,7 +280,6 @@ func TestStopRequestRemovedOnceOwnerIsGone(t *testing.T) {
 		t.Fatal("stop file was not removed after owner gone")
 	}
 
-	// Cleanup
 	if err := r.Forget(target); err != nil {
 		t.Fatalf("Forget: %v", err)
 	}

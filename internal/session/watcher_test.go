@@ -26,6 +26,20 @@ func waitMount(t *testing.T, target, expected string) {
 	t.Fatalf("mount %s did not reach %q", target, expected)
 }
 
+// awaitReconcile returns once the session has acted on everything that
+// happened before the call. The session takes one worktree listing per round
+// and only that round can mount a worktree registered here, so seeing this
+// worktree mounted proves a listing was taken after the call.
+func awaitReconcile(t *testing.T, project, root, name string) {
+	t.Helper()
+	worktree := filepath.Join(root, ".workspaces", name)
+	cmd := exec.Command("git", "-C", project, "worktree", "add", "-b", name, worktree, "HEAD")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("add worktree %s: %v: %s", name, err, out)
+	}
+	waitMount(t, worktree, overlayfs.FilesystemType)
+}
+
 func TestLiveWorktreeDiscovery(t *testing.T) {
 	root := t.TempDir()
 	project := filepath.Join(root, "project")
@@ -81,7 +95,9 @@ func TestLiveWorktreeDiscovery(t *testing.T) {
 	}
 	waitMount(t, worktree, "")
 	// An explicit unmount stays suppressed while the registration still exists.
-	time.Sleep(300 * time.Millisecond)
+	// Two rounds: a mount wrongly started by the first is up by the second.
+	awaitReconcile(t, project, root, "first-round")
+	awaitReconcile(t, project, root, "second-round")
 	waitMount(t, worktree, "")
 	cmd = exec.Command("git", "-C", worktree, "rev-parse", "--absolute-git-dir")
 	metadata, err := cmd.Output()
@@ -94,8 +110,8 @@ func TestLiveWorktreeDiscovery(t *testing.T) {
 	if err := os.Rename(name, parked); err != nil {
 		t.Fatal(err)
 	}
-	waitMount(t, worktree, "")
-	time.Sleep(300 * time.Millisecond)
+	// The session retries the worktree only after it has seen it unregistered.
+	awaitReconcile(t, project, root, "unregistered")
 	if err := os.Rename(parked, name); err != nil {
 		t.Fatal(err)
 	}

@@ -46,6 +46,7 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - Worktrees use the original configured overlay sources; do not create per-worktree `.ai` symlinks.
 - Home directory paths: paths inside `~` are abbreviated with `~/` in status and mount output.
 - Shared memory mapping: a test that maps a mounted file into memory must do so from a child process, because a page fault on a mount served by the same process can deadlock it (see `TestSharedMappingOfProjectFile`).
+- Session tests never wait for the watcher with a fixed sleep: `awaitReconcile` in `internal/session/watcher_test.go` registers a worktree and waits for its mount, which proves a reconcile ran after the call.
 - Git tracking: a file that Git tracks in the project and that also has an overlay contribution reads as the joined content, so Git reports it as modified, and Git operations that rewrite it (checkout, stash, restore, pull) fail while mounted.
 
 ## Live verification

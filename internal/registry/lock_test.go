@@ -1,14 +1,19 @@
 package registry
 
 import (
+	"bytes"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 func stateEntries(t *testing.T, r *Registry) []string {
@@ -114,6 +119,81 @@ func TestBusyLockSurvivesContender(t *testing.T) {
 		if _, err := os.Stat(r.File() + ".lock"); err != nil {
 			t.Fatalf("owner's lock file after a refused contender: %v", err)
 		}
+	}
+}
+
+func TestLinkedFollowsTheFileUnderItsName(t *testing.T) {
+	name := filepath.Join(t.TempDir(), "lock")
+	file, err := os.Create(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := file.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	steps := []struct {
+		name   string
+		change func() error
+		want   bool
+	}{
+		{"untouched", func() error { return nil }, true},
+		{"removed", func() error { return os.Remove(name) }, false},
+		{"replaced", func() error { return os.WriteFile(name, nil, 0600) }, false},
+	}
+	for _, step := range steps {
+		if err := step.change(); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := linked(file); err != nil || got != step.want {
+			t.Fatalf("%s: linked = %v, %v; want %v", step.name, got, err, step.want)
+		}
+	}
+}
+
+func TestUnlockReportsFailedRelease(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	r, err := Acquire(t.TempDir(), "project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	// Closing the handle behind the registry's back makes the release fail.
+	if err := r.lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r.Unlock()
+
+	if !strings.Contains(logs.String(), "release project lock") {
+		t.Fatalf("failed release was not reported: %q", logs.String())
+	}
+	if _, err := os.Stat(r.File() + ".lock"); !os.IsNotExist(err) {
+		t.Fatalf("lock file after a failed release: %v, want it removed", err)
+	}
+}
+
+func TestOpenReleasesLockWhenStopRequestCannotBeCleared(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	root := t.TempDir()
+	_, file, stop, err := Paths(root, "project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A directory with content cannot be removed the way a stop file is.
+	scratch.Write(t, filepath.Join(stop, "blocker"), "")
+
+	if r, err := Open(root, "project"); err == nil {
+		r.Unlock()
+		t.Fatal("leftover stop request that cannot be cleared was accepted")
+	}
+	if _, err := os.Stat(file + ".lock"); !os.IsNotExist(err) {
+		t.Fatalf("lock file after a refused open: %v, want it removed", err)
 	}
 }
 

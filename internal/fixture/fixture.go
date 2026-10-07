@@ -15,6 +15,7 @@ import (
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/config"
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitrepo"
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/subprocess"
 )
 
 //go:embed all:testdata/workspace
@@ -90,7 +91,7 @@ func git(ctx context.Context, target string, args ...string) error {
 			cmd.Env = append(cmd.Env, value)
 		}
 	}
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := subprocess.CombinedOutput(ctx, cmd); err != nil {
 		return fmt.Errorf("fixture git %s: %w: %s", strings.Join(args, " "), err, out)
 	}
 	return nil

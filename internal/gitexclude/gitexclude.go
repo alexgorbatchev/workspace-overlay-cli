@@ -17,6 +17,7 @@ import (
 
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitrepo"
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/logged"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/subprocess"
 )
 
 // File keeps a pre-mount handle: opening .git through the mounted filesystem would recurse.
@@ -37,7 +38,7 @@ func Open(ctx context.Context, project string) (*File, error) {
 		return nil, err
 	}
 	cmd := gitrepo.Command(ctx, project, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude")
-	data, err := cmd.Output()
+	data, err := subprocess.Output(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("locate Git exclude file: %w", err)
 	}

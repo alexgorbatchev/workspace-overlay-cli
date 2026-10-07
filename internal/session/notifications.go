@@ -12,6 +12,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitrepo"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/subprocess"
 )
 
 type notificationRoot struct {
@@ -34,7 +35,7 @@ func newNotifications(ctx context.Context, plan mountPlan, worktrees bool) (*not
 	if worktrees {
 		if _, err := plan.view.Project().Lstat(".git"); err == nil {
 			cmd := gitrepo.Command(ctx, plan.target, "rev-parse", "--path-format=absolute", "--git-common-dir")
-			data, err := cmd.Output()
+			data, err := subprocess.Output(ctx, cmd)
 			if err != nil {
 				return nil, errors.Join(err, n.close())
 			}

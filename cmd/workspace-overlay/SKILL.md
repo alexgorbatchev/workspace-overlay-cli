@@ -4,13 +4,13 @@ description: Use when mounting, inspecting, or stopping workspace-overlay and ed
 author: alexgorbatchev
 metadata:
   created_on: 2026-10-06 16:00
-  last_modified: 2026-10-07 12:48
+  last_modified: 2026-10-07 13:40
   status: current
 ---
 
 Run `workspace-overlay overlay mount` in a directory with `workspace-overlay.toml` in its ancestry, or supply `--config path/to/workspace-overlay.toml`. Require Linux with accessible `/dev/fuse`, and the `git`, `findmnt`, and `fusermount3` commands on `PATH`.
 
-- `overlay mount`: Serve every configured project and its Git worktrees in the foreground. Accept no positional arguments. SIGINT/SIGTERM stops all mounts. Mount failures cancel the group. Refuse a target mounted with another filesystem type, with or without `--replace`; refuse a target that already has an overlay mount unless `--replace` is given. External unmount of a primary project stops that project's mounts; external unmount of a linked worktree suppresses it until it is unregistered and registered again.
+- `overlay mount`: Serve every configured project and its Git worktrees in the foreground. Accept no positional arguments. SIGINT/SIGTERM stops all mounts and is a clean stop even while a check is running. A mount failure cancels the group and only the failing project's error is reported. Refuse a target mounted with another filesystem type, with or without `--replace`; refuse a target that already has an overlay mount unless `--replace` is given. External unmount of a primary project stops that project's mounts; external unmount of a linked worktree suppresses it until it is unregistered and registered again.
 - `overlay unmount`: Stop selected owner processes and clean their mounts and managed Git exclusions. Recover recorded mounts from terminated owners. Succeed for unmounted targets; refuse filesystems other than `fuse.workspace-overlay`.
 - `overlay status`: Print one tab-separated target path and filesystem type per target, including recorded mounts that Git no longer lists. Print `unmounted` for unmounted targets. With `--worktrees=false`, only discover primary projects but still list recorded mounts. Return exit 0 for unmounted targets.
 - `--config` (string, default empty): Apply to all overlay commands. Empty discovers the nearest `workspace-overlay.toml` in the current or parent directories. Resolve configured project and source paths relative to the file's directory.

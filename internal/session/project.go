@@ -119,6 +119,12 @@ func runProject(ctx context.Context, selection Selection, targets []string) (res
 			plan.view.Close()
 		}
 	}()
+	// Runs before the cleanup above adds its own errors to the result.
+	defer func() {
+		if stopped(ctx, result) {
+			result = nil
+		}
+	}()
 	// Git common directories can lie underneath another target in this set.
 	for _, target := range targets {
 		plan, err := preparePlan(group, selection, target, nil, records)

@@ -12,6 +12,7 @@ import (
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/config"
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/overlayfs"
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/subprocess"
 )
 
 // errUnsupportedWorktree marks a worktree that cannot be mounted without
@@ -33,10 +34,10 @@ func ensureWorktreeIsolation(ctx context.Context, target string, sources []confi
 		}
 	}
 	cmd := exec.CommandContext(ctx, "findmnt", "--json", "--list", "--types", overlayfs.FilesystemType, "--output", "TARGET")
-	data, err := cmd.Output()
+	data, err := subprocess.Output(ctx, cmd)
 	if err != nil {
 		var exit *exec.ExitError
-		if ctx.Err() == nil && errors.As(err, &exit) && exit.ExitCode() == 1 && len(data) == 0 && len(exit.Stderr) == 0 {
+		if errors.As(err, &exit) && exit.ExitCode() == 1 && len(data) == 0 && len(exit.Stderr) == 0 {
 			return nil
 		}
 		return fmt.Errorf("inspect existing overlay mounts: %w", err)
@@ -65,10 +66,10 @@ func mountedType(ctx context.Context, target string) (string, error) {
 	cmd := exec.CommandContext(ctx, "findmnt", "--raw", "--noheadings", "--output", "FSTYPE", "--mountpoint", target)
 	var diagnostics strings.Builder
 	cmd.Stderr = &diagnostics
-	data, err := cmd.Output()
+	data, err := subprocess.Output(ctx, cmd)
 	if err != nil {
 		var exit *exec.ExitError
-		if ctx.Err() == nil && errors.As(err, &exit) && exit.ExitCode() == 1 && len(data) == 0 && diagnostics.Len() == 0 {
+		if errors.As(err, &exit) && exit.ExitCode() == 1 && len(data) == 0 && diagnostics.Len() == 0 {
 			return "", nil
 		}
 		return "", fmt.Errorf("inspect mount %s: %w: %s", target, err, strings.TrimSpace(diagnostics.String()))
@@ -91,7 +92,7 @@ func unmountOverlay(ctx context.Context, target string) error {
 	if err != nil {
 		return err
 	}
-	data, err := exec.CommandContext(ctx, "fusermount3", "-u", "--", target).CombinedOutput()
+	data, err := subprocess.CombinedOutput(ctx, exec.CommandContext(ctx, "fusermount3", "-u", "--", target))
 	if err != nil {
 		return fmt.Errorf("unmount %s: %w: %s", target, err, strings.TrimSpace(string(data)))
 	}

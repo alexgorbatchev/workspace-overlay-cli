@@ -16,6 +16,7 @@ import (
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/overlayfs"
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/registry"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/subprocess"
 )
 
 type mountPlan struct {
@@ -62,7 +63,7 @@ func discoverWorktrees(ctx context.Context, target string, worktrees bool) ([]st
 		return nil, err
 	}
 	cmd := gitrepo.Command(ctx, target, "worktree", "list", "--porcelain", "-z")
-	data, err := cmd.Output()
+	data, err := subprocess.Output(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("discover worktrees: %w", err)
 	}
@@ -206,12 +207,22 @@ func Mount(ctx context.Context, selections []Selection) error {
 	}
 	var result error
 	for range selections {
-		if err := <-finished; err != nil {
-			result = errors.Join(result, err)
-			cancel()
+		err := <-finished
+		// The first failure tells the other projects to stop. That their work
+		// was interrupted is a consequence, not a failure to report.
+		if err == nil || stopped(group, err) {
+			continue
 		}
+		result = errors.Join(result, err)
+		cancel()
 	}
 	return result
+}
+
+// stopped reports whether err only says that ctx ended. That is how a project
+// is told to stop, so it is not a failure of the project.
+func stopped(ctx context.Context, err error) bool {
+	return ctx.Err() != nil && errors.Is(err, ctx.Err())
 }
 
 // unsupportedWorktree explains why a linked worktree cannot be mounted

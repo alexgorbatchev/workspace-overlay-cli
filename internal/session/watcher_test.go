@@ -2,9 +2,11 @@ package session
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -13,12 +15,42 @@ import (
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
+// selfReadable prepares an overlay mount for being read by the process that
+// serves it, as these tests do with the sessions they run.
+//
+// The Go runtime registers every file it opens with its poller, and on a FUSE
+// mount the first registration asks the file system whether it supports
+// polling. Asked from inside the runtime, that question holds a processor the
+// runtime believes to be free while the answer has to come from this same
+// process, which can lock it up. go-fuse settles the question once per mount
+// with plain system calls in Server.WaitMount. The session leaves that call
+// out so that its process never touches its own mounts, so it is made here,
+// on the file go-fuse serves for this purpose.
+func selfReadable(target string) error {
+	fd, err := syscall.Open(filepath.Join(target, ".go-fuse-epoll-hack"), syscall.O_RDONLY, 0)
+	if err != nil {
+		return err
+	}
+	var files syscall.FdSet
+	files.Bits[fd/64] |= 1 << (fd % 64)
+	_, err = syscall.Select(fd+1, &files, nil, nil, &syscall.Timeval{})
+	return errors.Join(err, syscall.Close(fd))
+}
+
+// waitMount returns once target is mounted with the expected file system
+// type, or not mounted when expected is empty. An overlay mount is then
+// ready to be read by this process.
 func waitMount(t *testing.T, target, expected string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		kind, err := mountedType(context.Background(), target)
 		if err == nil && kind == expected {
+			if expected == overlayfs.FilesystemType {
+				if err := selfReadable(target); err != nil {
+					t.Fatalf("prepare %s for reading: %v", target, err)
+				}
+			}
 			return
 		}
 		time.Sleep(50 * time.Millisecond)

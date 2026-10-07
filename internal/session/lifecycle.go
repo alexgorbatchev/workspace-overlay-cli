@@ -58,12 +58,27 @@ func ensureWorktreeIsolation(ctx context.Context, target string, sources []confi
 	return nil
 }
 
+// mountedType returns the type of the file system mounted exactly at target,
+// or "" when nothing is mounted there.
 func mountedType(ctx context.Context, target string) (string, error) {
-	target, err := filepath.Abs(target)
+	return findmnt(ctx, "--mountpoint", target)
+}
+
+// holdingType returns the type of the file system that holds path, wherever
+// in that file system path lies, or "" when path does not exist.
+func holdingType(ctx context.Context, path string) (string, error) {
+	return findmnt(ctx, "--target", path)
+}
+
+// findmnt asks the findmnt command for the file system type selected by
+// selector and path. The lookup runs in another process, so a path inside a
+// mount that this process serves is never touched from here.
+func findmnt(ctx context.Context, selector, path string) (string, error) {
+	path, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.CommandContext(ctx, "findmnt", "--raw", "--noheadings", "--output", "FSTYPE", "--mountpoint", target)
+	cmd := exec.CommandContext(ctx, "findmnt", "--raw", "--noheadings", "--output", "FSTYPE", selector, path)
 	var diagnostics strings.Builder
 	cmd.Stderr = &diagnostics
 	data, err := subprocess.Output(ctx, cmd)
@@ -72,7 +87,7 @@ func mountedType(ctx context.Context, target string) (string, error) {
 		if errors.As(err, &exit) && exit.ExitCode() == 1 && len(data) == 0 && diagnostics.Len() == 0 {
 			return "", nil
 		}
-		return "", fmt.Errorf("inspect mount %s: %w: %s", target, err, strings.TrimSpace(diagnostics.String()))
+		return "", fmt.Errorf("inspect mount %s: %w: %s", path, err, strings.TrimSpace(diagnostics.String()))
 	}
 	return strings.TrimSpace(string(data)), nil
 }

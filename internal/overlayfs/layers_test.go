@@ -80,6 +80,11 @@ func mountedProject(t *testing.T, project string, sources ...string) *View {
 		}
 		v.Close()
 	})
+	// Tests read the mount from the process that serves it, which is what
+	// WaitMount prepares a mount for and View.Mount leaves out.
+	if err := server.WaitMount(); err != nil {
+		t.Fatal(err)
+	}
 	return v
 }
 

@@ -52,16 +52,24 @@ func stopExisting(ctx context.Context, selection Selection) error {
 	return nil
 }
 
+// discoverWorktrees returns target and its registered worktrees. It looks at
+// target through its path, so it is for projects this process does not serve;
+// a running session uses projectRunner.targets.
 func discoverWorktrees(ctx context.Context, target string, worktrees bool) ([]string, error) {
-	targets := []string{target}
 	if !worktrees {
-		return targets, nil
+		return []string{target}, nil
 	}
 	if _, err := os.Lstat(filepath.Join(target, ".git")); errors.Is(err, os.ErrNotExist) {
-		return targets, nil
+		return []string{target}, nil
 	} else if err != nil {
 		return nil, err
 	}
+	return listWorktrees(ctx, target)
+}
+
+// listWorktrees asks Git for target and the worktrees linked to it.
+func listWorktrees(ctx context.Context, target string) ([]string, error) {
+	targets := []string{target}
 	cmd := gitrepo.Command(ctx, target, "worktree", "list", "--porcelain", "-z")
 	data, err := subprocess.Output(ctx, cmd)
 	if err != nil {

@@ -15,7 +15,9 @@ import (
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
-func testProjectRunner(t *testing.T) *projectRunner {
+// testProjectRunner returns a runner for a project without Git metadata and
+// the plan prepared for that project, which no mount serves yet.
+func testProjectRunner(t *testing.T) (*projectRunner, mountPlan) {
 	t.Helper()
 	root := t.TempDir()
 	project := filepath.Join(root, "project")
@@ -35,7 +37,7 @@ func testProjectRunner(t *testing.T) *projectRunner {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &projectRunner{selection: selection, records: records, notify: n, active: map[string]*runningMount{}, suppressed: map[string]string{}, events: make(chan *runningMount, 1)}
+	p := &projectRunner{selection: selection, records: records, notify: n, active: map[string]*runningMount{}, suppressed: map[string]string{}, events: make(chan *runningMount, 1), project: plan.view.Project()}
 	t.Cleanup(func() {
 		if err := n.close(); err != nil {
 			t.Log(err)
@@ -48,11 +50,11 @@ func testProjectRunner(t *testing.T) *projectRunner {
 			t.Error(err)
 		}
 	})
-	return p
+	return p, plan
 }
 
 func TestProjectWatcherClosure(t *testing.T) {
-	p := testProjectRunner(t)
+	p, _ := testProjectRunner(t)
 	if err := p.notify.watcher.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +64,7 @@ func TestProjectWatcherClosure(t *testing.T) {
 }
 
 func TestProjectWatcherOverflow(t *testing.T) {
-	p := testProjectRunner(t)
+	p, _ := testProjectRunner(t)
 	// The real fsnotify channel accepts the same overflow error delivered by inotify.
 	go func() { p.notify.watcher.Errors <- fsnotify.ErrEventOverflow }()
 	p.selection.Worktrees = true
@@ -76,7 +78,7 @@ func TestProjectReconcileErrors(t *testing.T) {
 	cases := []string{"corrupt metadata", "new foreign mount", "missing working directory"}
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
-			p := testProjectRunner(t)
+			p, _ := testProjectRunner(t)
 			switch name {
 			case "corrupt metadata":
 				p.selection.Worktrees = true
@@ -145,5 +147,37 @@ func TestFailedStartDiscardsPreparedPlans(t *testing.T) {
 	state, err := registry.Read(root, "project")
 	if err != nil || state.Version != 0 {
 		t.Fatalf("registry after a failed start: %+v, %v; want no record", state, err)
+	}
+}
+
+// The session decides whether a project it serves has Git metadata from the
+// directory it opened before mounting, never from the project's path: a
+// request to its own mount could not be answered if the process were killed
+// meanwhile. The test stands a different directory at the path, the way a
+// mount does, and expects the session not to consult it.
+func TestReconcileInspectsServedProjectThroughItsBackingDirectory(t *testing.T) {
+	p, plan := testProjectRunner(t)
+	project := p.selection.Target
+	p.selection.Worktrees = true
+	p.active[project] = &runningMount{plan: plan}
+	if err := os.Rename(project, project+".backing"); err != nil {
+		t.Fatal(err)
+	}
+	scratch.GitRepo(t, project)
+	linked := filepath.Join(p.selection.Root, "linked")
+	addWorktree(t, project, "linked", linked)
+	t.Cleanup(func() {
+		if mount := p.active[linked]; mount != nil {
+			mount.cancel()
+			<-mount.done
+		}
+	})
+
+	if err := p.reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if p.active[linked] != nil {
+		t.Fatal("the session looked through the project path and mounted a worktree its backing directory does not have")
 	}
 }

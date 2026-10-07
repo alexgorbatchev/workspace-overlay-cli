@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -163,4 +164,85 @@ func TestStopDuringReconcileStillReportsFailedCleanup(t *testing.T) {
 		t.Fatal("session did not stop")
 	}
 	waitMount(t, project, "")
+}
+
+// A newly registered worktree may lie inside a mount this process serves, and
+// the process must not touch its own mounts. So the first thing done with a
+// candidate is to ask another process which file system holds it.
+func TestCandidateWorktreeIsLocatedByAnotherProcessFirst(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	scratch.GitRepo(t, project)
+	selection := Selection{Root: root, Project: "project", Target: project, Worktrees: true,
+		Sources: []config.Source{{Name: "shared", Path: scratch.Mkdir(t, filepath.Join(root, ".ai", "shared")), Glob: "**/*"}}}
+	logs := &processOutput{}
+	previous := log.Writer()
+	log.SetOutput(logs)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() { finished <- mountProjects(ctx, selection) }()
+	waitMount(t, project, overlayfs.FilesystemType)
+
+	located := stall(t, "findmnt", "--target")
+	located.arm(t)
+	nested := filepath.Join(project, "nested")
+	addWorktree(t, project, "nested", nested)
+	located.wait(t)
+
+	if strings.Contains(logs.String(), "Skipping worktree") {
+		t.Fatalf("the worktree was judged before another process had located it:\n%s", logs)
+	}
+	cancel()
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatalf("stopping while a worktree is being located = %v, want a clean stop", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("session did not stop")
+	}
+	waitMount(t, project, "")
+}
+
+func TestHoldingTypeNamesTheFileSystemOfAPath(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	scratch.GitRepo(t, project)
+	scratch.Mkdir(t, filepath.Join(project, "inner"))
+	selection := Selection{Root: root, Project: "project", Target: project,
+		Sources: []config.Source{{Name: "shared", Path: scratch.Mkdir(t, filepath.Join(root, ".ai", "shared")), Glob: "**/*"}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan error, 1)
+	go func() { finished <- mountProjects(ctx, selection) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-finished:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("session did not stop")
+		}
+	})
+	waitMount(t, project, overlayfs.FilesystemType)
+	outside, err := holdingType(context.Background(), root)
+	if err != nil || outside == "" || outside == overlayfs.FilesystemType {
+		t.Fatalf("file system of a directory outside the mount = %q, %v", outside, err)
+	}
+
+	tests := []struct{ path, want string }{
+		{project, overlayfs.FilesystemType},
+		{filepath.Join(project, "inner"), overlayfs.FilesystemType},
+		{filepath.Join(project, "missing"), ""},
+		{filepath.Join(root, "missing"), ""},
+		{filepath.Join(root, ".ai"), outside},
+	}
+	for _, tt := range tests {
+		if got, err := holdingType(context.Background(), tt.path); err != nil || got != tt.want {
+			t.Errorf("holdingType(%s) = %q, %v; want %q", tt.path, got, err, tt.want)
+		}
+	}
 }

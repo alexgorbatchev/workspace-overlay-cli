@@ -38,6 +38,8 @@ type projectRunner struct {
 	suppressed map[string]string
 	events     chan *runningMount
 	primary    *gitexclude.File
+	// project is the project's own directory, opened before it was mounted.
+	project *os.Root
 }
 
 // discard releases a plan that is not being served: it removes the plan's Git
@@ -140,6 +142,7 @@ func runProject(ctx context.Context, selection Selection, targets []string) (res
 		plans = append(plans, plan)
 	}
 	p.primary = plans[0].view.Exclude()
+	p.project = plans[0].view.Project()
 	p.notify, err = newNotifications(group, plans[0], selection.Worktrees)
 	if err != nil {
 		return err
@@ -212,8 +215,24 @@ func (p *projectRunner) start(ctx context.Context, plan mountPlan) {
 	}()
 }
 
+// targets lists the project and its registered worktrees. This process
+// serves the project's mount, so it looks for Git metadata in the directory
+// it opened before mounting: a process that is killed while it waits on its
+// own mount never exits.
+func (p *projectRunner) targets(ctx context.Context) ([]string, error) {
+	if !p.selection.Worktrees {
+		return []string{p.selection.Target}, nil
+	}
+	if _, err := p.project.Lstat(".git"); errors.Is(err, os.ErrNotExist) {
+		return []string{p.selection.Target}, nil
+	} else if err != nil {
+		return nil, err
+	}
+	return listWorktrees(ctx, p.selection.Target)
+}
+
 func (p *projectRunner) reconcile(ctx context.Context) error {
-	targets, err := discoverWorktrees(ctx, p.selection.Target, p.selection.Worktrees)
+	targets, err := p.targets(ctx)
 	if err != nil {
 		return err
 	}
@@ -241,6 +260,21 @@ func (p *projectRunner) reconcile(ctx context.Context) error {
 	}
 	for _, target := range targets {
 		if _, suppressed := p.suppressed[target]; suppressed || p.active[target] != nil {
+			continue
+		}
+		// The candidate may lie inside a mount this process serves, which it
+		// must not touch, so another process says where the candidate lives
+		// before anything here looks at it.
+		holder, err := holdingType(ctx, target)
+		if err != nil {
+			return err
+		}
+		if holder == "" {
+			// Git registration can precede creation of the working directory.
+			continue
+		}
+		if holder == overlayfs.FilesystemType {
+			p.skip(ctx, target, fmt.Errorf("%w: %s overlaps an active mount", errUnsupportedWorktree, pathname.Display(target)))
 			continue
 		}
 		resolved, err := filepath.EvalSymlinks(target)

@@ -57,11 +57,6 @@ func (o *processOutput) String() string {
 // startOwner serves a configuration from another process, the way a real
 // session runs, so a test can kill it and leave its mounts behind. It returns
 // once the owner has reported that many targets as mounted.
-//
-// The report matters: a mount appears in the mount table before the FUSE
-// library has finished its own first access to it, and a process killed during
-// that access can never exit, because the request it waits on would have been
-// answered by the process itself.
 func startOwner(t *testing.T, configFile string, mounts int) (*exec.Cmd, *processOutput) {
 	t.Helper()
 	owner := exec.Command(os.Args[0], "-test.run=^TestOwnerProcessHelper$")
@@ -138,6 +133,11 @@ projects=['*']
 
 	served := func() bool {
 		for _, target := range targets {
+			// Fails while the dead mount or no mount is there, and prepares the
+			// new session's mount for the read that follows.
+			if selfReadable(target) != nil {
+				return false
+			}
 			if data, err := os.ReadFile(filepath.Join(target, "overlay-only.md")); err != nil || string(data) != "overlay\n" {
 				return false
 			}
@@ -173,6 +173,95 @@ projects=['*']
 	}
 	if state.Version != 0 || len(state.Mounts) != 0 {
 		t.Fatalf("registry not cleaned: %+v", state)
+	}
+}
+
+// abortMount ends the FUSE connection behind target, which releases a process
+// that is stuck waiting on it.
+func abortMount(t *testing.T, target string) {
+	t.Helper()
+	table, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	for line := range strings.Lines(string(table)) {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || fields[4] != target {
+			continue
+		}
+		_, connection, _ := strings.Cut(fields[2], ":")
+		if err := os.WriteFile(filepath.Join("/sys/fs/fuse/connections", connection, "abort"), []byte("1"), 0); err != nil {
+			t.Errorf("abort the connection of %s: %v", target, err)
+		}
+	}
+}
+
+// An owner that is killed must exit, whenever the kill arrives. A process
+// killed in the middle of a file operation on a mount it serves never does:
+// the request waits for an answer only that process could give. The first
+// milliseconds after a mount appears are where such an operation used to be,
+// so that is where the kill is aimed.
+func TestKilledOwnerAlwaysExits(t *testing.T) {
+	delays := []time.Duration{300 * time.Microsecond, 600 * time.Microsecond, time.Millisecond}
+	for round := range 4 * len(delays) {
+		delay := delays[round%len(delays)]
+		root := t.TempDir()
+		project := filepath.Join(root, "project")
+		scratch.GitRepo(t, project)
+		worktree := filepath.Join(root, ".workspaces", "one", "project")
+		addWorktree(t, project, "linked", worktree)
+		scratch.Write(t, filepath.Join(root, "ai", "overlay-only.md"), "overlay\n")
+		configFile := scratch.Write(t, filepath.Join(root, config.Name), "version=1\n[projects.project]\npath='project'\n[[overlays]]\nname='ai'\nsource='ai'\nprojects=['*']\n")
+		targets := []string{project, worktree}
+
+		owner, output := startOwner(t, configFile, 0)
+		listed := func() bool {
+			table, err := os.ReadFile("/proc/self/mountinfo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, target := range targets {
+				if !strings.Contains(string(table), " "+target+" ") {
+					return false
+				}
+			}
+			return true
+		}
+		for deadline := time.Now().Add(10 * time.Second); !listed(); {
+			if time.Now().After(deadline) {
+				t.Fatalf("mounts never appeared:\n%s", output)
+			}
+		}
+		// Sleeping is too coarse for a window this narrow.
+		for start := time.Now(); time.Since(start) < delay; {
+		}
+		if err := owner.Process.Kill(); err != nil {
+			t.Fatal(err)
+		}
+		exited := make(chan struct{})
+		go func() {
+			_ = owner.Wait() // a killed process always reports an error
+			close(exited)
+		}()
+		stuck := false
+		select {
+		case <-exited:
+		case <-time.After(5 * time.Second):
+			stuck = true
+			for _, target := range targets {
+				abortMount(t, target)
+			}
+			<-exited
+		}
+		for _, target := range targets {
+			if err := unmountOverlay(context.Background(), target); err != nil {
+				t.Errorf("remove the dead mount %s: %v", target, err)
+			}
+		}
+		if stuck {
+			t.Fatalf("round %d: owner killed %s after its mounts appeared did not exit", round, delay)
+		}
 	}
 }
 

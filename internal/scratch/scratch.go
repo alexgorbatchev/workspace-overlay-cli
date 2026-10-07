@@ -6,8 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// statePrefix names the per-process state directories inside .tmp.
+const statePrefix = "state-"
 
 // Write creates name with content, making parent directories as needed.
 func Write(t testing.TB, name, content string) string {
@@ -61,28 +65,51 @@ func GitRepo(t testing.TB, dir string) {
 	}
 }
 
-// Main runs a package's tests with temporary files and tool state kept inside the module's .tmp directory, never in the user's home or the system temporary directory.
+// Main runs a package's tests with temporary files and tool state kept inside
+// the module's .tmp directory, never in the user's home or the system
+// temporary directory. Tool state gets a directory of its own that is removed
+// when the tests finish, so nothing a test leaves behind outlives the run.
 func Main(m *testing.M) {
-	moduleRoot, err := findModuleRoot()
-	if err == nil {
-		dir := filepath.Join(moduleRoot, ".tmp")
-		err = os.MkdirAll(dir, 0700)
-		if err == nil {
-			err = os.Setenv("TMPDIR", dir)
-		}
-		if err == nil {
-			stateDir := filepath.Join(dir, "state")
-			err = os.MkdirAll(stateDir, 0700)
-			if err == nil {
-				err = os.Setenv("XDG_STATE_HOME", stateDir)
-			}
-		}
-	}
+	cleanup, err := isolate()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if err := cleanup(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		code = 1
+	}
+	os.Exit(code)
+}
+
+// isolate points TMPDIR and XDG_STATE_HOME into the module's .tmp directory
+// and returns the cleanup to run after the tests.
+func isolate() (cleanup func() error, err error) {
+	moduleRoot, err := findModuleRoot()
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(moduleRoot, ".tmp")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, err
+	}
+	if err := os.Setenv("TMPDIR", dir); err != nil {
+		return nil, err
+	}
+	// A test that re-executes its own binary must share the state of the
+	// process that started it, which also owns the directory and removes it.
+	if inherited := os.Getenv("XDG_STATE_HOME"); filepath.Dir(inherited) == dir && strings.HasPrefix(filepath.Base(inherited), statePrefix) {
+		return func() error { return nil }, nil
+	}
+	state, err := os.MkdirTemp(dir, statePrefix)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Setenv("XDG_STATE_HOME", state); err != nil {
+		return nil, err
+	}
+	return func() error { return os.RemoveAll(state) }, nil
 }
 
 func findModuleRoot() (string, error) {

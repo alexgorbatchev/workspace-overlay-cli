@@ -12,29 +12,11 @@ import (
 	"testing"
 
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
 func TestMain(m *testing.M) {
-	dir, err := filepath.Abs("../../.tmp")
-	if err == nil {
-		err = os.MkdirAll(dir, 0700)
-	}
-	if err == nil {
-		err = os.Setenv("TMPDIR", dir)
-	}
-	// Isolate XDG_STATE_HOME to prevent tests from writing to the real home directory.
-	if err == nil {
-		stateDir := filepath.Join(dir, "state")
-		err = os.MkdirAll(stateDir, 0700)
-	}
-	if err == nil {
-		err = os.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-	}
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	os.Exit(m.Run())
+	scratch.Main(m)
 }
 
 func captureOutput(t *testing.T, fn func()) (string, string) {

@@ -105,11 +105,6 @@ func Load(name string) (*Configuration, error) {
 	return c, nil
 }
 
-// Root returns the directory containing the configuration file.
-func (c *Configuration) Root() string {
-	return c.root
-}
-
 func (c *Configuration) validate() error {
 	if c.Version != 1 {
 		return fmt.Errorf("version must be 1")

@@ -1,4 +1,4 @@
-`workspace-overlay` gives developers and coding agents a writable, layered view of project directories. Keep shared instructions, skills, and project-specific files in separate source directories, then expose them together in each project and its Git worktrees.
+`workspace-overlay` gives developers and coding agents a writable, layered view of project directories. Keep shared instructions, skills, and project-specific files in separate source directories, then expose them together in each project and its Git worktrees. This is useful when you are working on open source or enterprise projects and can't commit your AI files into the project. It especially useful if your workspace consists of multiple repositories and you want to have workspace and per-project AI files.
 
 # What It Does
 
@@ -37,7 +37,7 @@
 - Linux with accessible [`/dev/fuse`](https://docs.kernel.org/filesystems/fuse/fuse.html) for mounting the project view.
 - [`fusermount3`](https://github.com/libfuse/libfuse) on `PATH` for unmounting. The CLI invokes it for you.
 - [`findmnt`](https://man7.org/linux/man-pages/man8/findmnt.8.html) on `PATH` for mount inspection.
-- [Git](https://git-scm.com/docs/git-worktree) on `PATH` for versioned projects, worktree discovery, and repository exclusions. Unversioned projects mount without Git metadata.
+- [`git`](https://git-scm.com/docs/git-worktree) on `PATH` for versioned projects, worktree discovery, and repository exclusions. Unversioned projects mount without Git metadata.
 - Existing, readable project and source directories; writable sources for overlay edits.
 
 # Installation
@@ -73,43 +73,6 @@ For an explicit configuration path or a narrower mount:
 ```sh
 workspace-overlay overlay mount --config workspace-overlay.toml --project alpha
 ```
-
-# Options & Flags
-
-Root options:
-
-| Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--help` | `-h` | `false` | Print help for any command. |
-| `--version` | `-v` | `false` | Print the raw build version; default builds report `0.1.0`. |
-
-`workspace-overlay overlay` and its commands:
-
-| Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--config <path>` | | Empty | Discover the nearest `workspace-overlay.toml` in the current or parent directories. |
-| `--project <name>` | | Empty | Select all configured projects; supply a configured name to narrow the selection. |
-
-`workspace-overlay overlay mount`:
-
-| Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--worktrees` | | `true` | Discover and monitor Git worktrees; use `--worktrees=false` to mount primary projects only. |
-| `--replace` | | `false` | Stop existing overlays and recover stale registrations before mounting. Foreign filesystems are refused. |
-
-`workspace-overlay overlay status` and `workspace-overlay overlay unmount`:
-
-| Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--worktrees` | | `true` | Include Git worktree discovery. Recorded mounts remain included when false; unmount stops the selected owner and its mounts. |
-
-These overlay commands accept no positional arguments. `workspace-overlay help [command]` prints command help. `workspace-overlay skill` accepts no arguments or command-specific flags.
-
-`workspace-overlay fixture create` (no positional arguments):
-
-| Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--directory <path>` | | `.tmp/dev-workspace` | Create or reuse the verification workspace, relative to the current directory. |
 
 # Configuration
 
@@ -159,25 +122,43 @@ Per-overlay `collision` and `write` fields override `[defaults]`. The supported 
 
 The runtime requires Linux. Directory moves across layers, hard links to concatenated files, rename flags, special-file creation, and native extended attributes are unsupported. Open merged files retain their original snapshots; reopen them to read updated source contributions.
 
-# Verification Workspace
+# Options & Flags
 
-Create and mount the bundled mock workspace:
+Root options:
 
-```sh
-workspace-overlay fixture create
-workspace-overlay overlay mount --config .tmp/dev-workspace/workspace-overlay.toml --replace
-```
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--help` | `-h` | `false` | Print help for any command. |
+| `--version` | `-v` | `false` | Print the raw build version; default builds report `0.1.0`. |
 
-In another terminal, read the merged documents and stop the mounts:
+`workspace-overlay overlay` and its commands:
 
-```sh
-cat .tmp/dev-workspace/alpha/AGENTS.md
-cat .tmp/dev-workspace/.workspaces/one/alpha/docs/nested/notes.md
-workspace-overlay overlay status --config .tmp/dev-workspace/workspace-overlay.toml
-workspace-overlay overlay unmount --config .tmp/dev-workspace/workspace-overlay.toml
-```
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--config <path>` | | Empty | Discover the nearest `workspace-overlay.toml` in the current or parent directories. |
+| `--project <name>` | | Empty | Select all configured projects; supply a configured name to narrow the selection. |
 
-The workspace remains available after shutdown. Overlay edits persist under `.tmp/dev-workspace/.ai/`; ordinary project edits persist in their backing checkout. Contributor shortcuts and further live checks are in [AGENTS.md](AGENTS.md).
+`workspace-overlay overlay mount`:
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--worktrees` | | `true` | Discover and monitor Git worktrees; use `--worktrees=false` to mount primary projects only. |
+| `--replace` | | `false` | Stop existing overlays and recover stale registrations before mounting. Foreign filesystems are refused. |
+
+`workspace-overlay overlay status` and `workspace-overlay overlay unmount`:
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--worktrees` | | `true` | Include Git worktree discovery. Recorded mounts remain included when false; unmount stops the selected owner and its mounts. |
+
+These overlay commands accept no positional arguments. `workspace-overlay help [command]` prints command help. `workspace-overlay skill` accepts no arguments or command-specific flags.
+
+`workspace-overlay fixture create` (no positional arguments):
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--directory <path>` | | `.tmp/dev-workspace` | Create or reuse the verification workspace, relative to the current directory. |
+
 
 # License
 

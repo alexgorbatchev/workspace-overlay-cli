@@ -142,6 +142,30 @@ func (n *notifications) relevant(event fsnotify.Event) bool {
 	return false
 }
 
+// unregistered reports that event ended a worktree registration and returns
+// its name, or "" when the directory holding every registration went away.
+func (n *notifications) unregistered(event fsnotify.Event) (name string, ended bool) {
+	if !event.Has(fsnotify.Remove) && !event.Has(fsnotify.Rename) {
+		return "", false
+	}
+	for _, root := range n.roots {
+		if !root.git {
+			continue
+		}
+		rel, err := filepath.Rel(nativePath(root.file), event.Name)
+		if err != nil {
+			continue
+		}
+		if rel == "worktrees" {
+			return "", true
+		}
+		if filepath.Dir(rel) == "worktrees" {
+			return filepath.Base(rel), true
+		}
+	}
+	return "", false
+}
+
 func (n *notifications) close() error {
 	err := n.watcher.Close()
 	for _, root := range n.roots {

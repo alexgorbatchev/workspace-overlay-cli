@@ -34,7 +34,7 @@ func testProjectRunner(t *testing.T) *projectRunner {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &projectRunner{selection: selection, records: records, notify: n, active: map[string]*runningMount{}, suppressed: map[string]bool{}, events: make(chan *runningMount, 1)}
+	p := &projectRunner{selection: selection, records: records, notify: n, active: map[string]*runningMount{}, suppressed: map[string]string{}, events: make(chan *runningMount, 1)}
 	t.Cleanup(func() {
 		if err := n.close(); err != nil {
 			t.Log(err)
@@ -94,7 +94,7 @@ func TestProjectReconcileErrors(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if !p.suppressed["/proc"] {
+				if _, suppressed := p.suppressed["/proc"]; !suppressed {
 					t.Fatal("foreign mount was not suppressed")
 				}
 			} else if err == nil {

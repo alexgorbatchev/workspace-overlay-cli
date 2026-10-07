@@ -7,12 +7,15 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitexclude"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitrepo"
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/overlayfs"
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/registry"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/subprocess"
 )
 
 const debounceDelay = 200 * time.Millisecond
@@ -26,11 +29,13 @@ type runningMount struct {
 }
 
 type projectRunner struct {
-	selection  Selection
-	records    *registry.Registry
-	notify     *notifications
-	active     map[string]*runningMount
-	suppressed map[string]bool
+	selection Selection
+	records   *registry.Registry
+	notify    *notifications
+	active    map[string]*runningMount
+	// suppressed holds the worktrees that must stay unmounted, each with the
+	// name of its Git registration, or "" when that is unknown.
+	suppressed map[string]string
 	events     chan *runningMount
 	primary    *gitexclude.File
 }
@@ -88,9 +93,9 @@ func runProject(ctx context.Context, selection Selection, targets []string) (res
 	if err != nil {
 		return err
 	}
-	p := &projectRunner{selection: selection, records: records, active: make(map[string]*runningMount), suppressed: make(map[string]bool), events: make(chan *runningMount)}
+	p := &projectRunner{selection: selection, records: records, active: make(map[string]*runningMount), suppressed: make(map[string]string), events: make(chan *runningMount)}
 	for _, target := range selection.Suppressed {
-		p.suppressed[target] = true
+		p.suppress(ctx, target)
 	}
 	group, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -151,9 +156,40 @@ func runProject(ctx context.Context, selection Selection, targets []string) (res
 
 // skip leaves one worktree unmounted without stopping the project. It is
 // retried only after Git unregisters and registers it again.
-func (p *projectRunner) skip(target string, reason error) {
+func (p *projectRunner) skip(ctx context.Context, target string, reason error) {
 	log.Printf("Skipping worktree %s: %v", pathname.Display(target), reason)
-	p.suppressed[target] = true
+	p.suppress(ctx, target)
+}
+
+// suppress keeps target unmounted for as long as its Git registration lasts.
+func (p *projectRunner) suppress(ctx context.Context, target string) {
+	p.suppressed[target] = registration(ctx, target)
+}
+
+// release lets the worktree registered under name be mounted again; an empty
+// name stands for every registration. The registration ended, so a worktree
+// now found at the same path is a new one, even if Git registered it again
+// before the next listing could show it missing.
+func (p *projectRunner) release(name string) {
+	for target, registered := range p.suppressed {
+		if registered != "" && (name == "" || name == registered) {
+			delete(p.suppressed, target)
+		}
+	}
+}
+
+// registration returns the name under which Git registered the linked
+// worktree at target, or "" when target is not one or Git cannot tell.
+func registration(ctx context.Context, target string) string {
+	data, err := subprocess.Output(ctx, gitrepo.Command(ctx, target, "rev-parse", "--absolute-git-dir"))
+	if err != nil {
+		return ""
+	}
+	metadata := strings.TrimSpace(string(data))
+	if filepath.Base(filepath.Dir(metadata)) != "worktrees" {
+		return ""
+	}
+	return filepath.Base(metadata)
 }
 
 func (p *projectRunner) start(ctx context.Context, plan mountPlan) {
@@ -203,7 +239,7 @@ func (p *projectRunner) reconcile(ctx context.Context) error {
 		}
 	}
 	for _, target := range targets {
-		if p.active[target] != nil || p.suppressed[target] {
+		if _, suppressed := p.suppressed[target]; suppressed || p.active[target] != nil {
 			continue
 		}
 		resolved, err := filepath.EvalSymlinks(target)
@@ -215,7 +251,7 @@ func (p *projectRunner) reconcile(ctx context.Context) error {
 		}
 		if err := ensureWorktreeIsolation(ctx, resolved, p.selection.Sources); err != nil {
 			if errors.Is(err, errUnsupportedWorktree) {
-				p.skip(target, err)
+				p.skip(ctx, target, err)
 				continue
 			}
 			return err
@@ -225,7 +261,7 @@ func (p *projectRunner) reconcile(ctx context.Context) error {
 			return err
 		}
 		if kind != "" {
-			p.skip(target, fmt.Errorf("%w: already mounted as %s", errUnsupportedWorktree, kind))
+			p.skip(ctx, target, fmt.Errorf("%w: already mounted as %s", errUnsupportedWorktree, kind))
 			continue
 		}
 		plan, err := preparePlan(ctx, p.selection, target, p.primary, p.records)
@@ -262,7 +298,7 @@ func (p *projectRunner) loop(ctx context.Context) error {
 			if mount.plan.target == p.selection.Target || len(p.active) == 0 {
 				return nil
 			}
-			p.suppressed[mount.plan.target] = true
+			p.suppress(ctx, mount.plan.target)
 		case event, ok := <-p.notify.watcher.Events:
 			if !ok {
 				return fmt.Errorf("filesystem watcher closed unexpectedly")
@@ -271,6 +307,9 @@ func (p *projectRunner) loop(ctx context.Context) error {
 				if _, err := os.Stat(p.records.StopFile()); err == nil {
 					return nil
 				}
+			}
+			if name, ended := p.notify.unregistered(event); ended {
+				p.release(name)
 			}
 			if p.notify.relevant(event) {
 				if err := p.notify.sync(); err != nil {

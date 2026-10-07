@@ -1,4 +1,5 @@
 /bin/
+/workspace-overlay
 /.tmp/
 *.out
 *.test

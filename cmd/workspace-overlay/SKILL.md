@@ -4,7 +4,7 @@ description: Use when mounting, inspecting, or stopping workspace-overlay and ed
 author: alexgorbatchev
 metadata:
   created_on: 2026-10-06 16:00
-  last_modified: 2026-10-07 22:30
+  last_modified: 2026-10-07 23:45
   status: current
 ---
 
@@ -17,8 +17,6 @@ Run `workspace-overlay overlay mount` in a directory with `workspace-overlay.tom
 - `--project` (string, default empty): Apply to all overlay commands. Empty selects all configured projects in sorted name order. A supplied name must exist in `[projects]`.
 - `--worktrees` (bool, default true): Apply to all overlay commands. Include registered Git worktrees; mount monitors changes. Set `--worktrees=false` to mount primary projects only or omit fresh worktree discovery for status and unmount. Status and unmount still include recorded mounts; unmount stops the selected owner and all its mounts. Skip bare, prunable, and initializing worktree records. Projects without their own `.git` mount alone.
 - `--replace` (bool, default false): Apply to mount only. Stop selected owners and recover stale registrations, then validate and mount. Refuse foreign filesystem replacement.
-- `fixture create`: Create an isolated workspace from embedded verification fixtures, or reuse a completed one without overwriting edits or recreating removed worktrees. Accept no positional arguments. Initialize Alpha and Beta Git repositories on `main`, commit their backing files with fixture identity and signing/hooks disabled, and create one `verification` branch worktree for each project under `.workspaces/one/`. Create shared `.ai/workspace` and per-project `.ai/alpha` and `.ai/beta` overlays, including `.agents/skills`. Print the configuration path to stdout, abbreviating home paths. Require Git; perform no mounting or network operations. Refuse existing foreign or incomplete directories; initialization failures retain incomplete data.
-- `fixture create --directory` (string, default `dev-workspace`): Resolve the fixture workspace directory relative to the current directory. Require a nonexistent directory on first creation. Reuse is recognized by `.workspace-overlay-fixture` and requires a valid configuration. Inherited `GIT_*` variables are excluded from fixture Git commands to keep repository writes isolated.
 - `skill`: Print this embedded guide verbatim, offline, without positional arguments or command-specific flags.
 - `help [command]`: Print help for a command path. `--help` / `-h` (bool, default false) prints help on any command. Shell completion generation is disabled.
 - `--version` / `-v` (bool, default false): Apply to the root. Print the raw version followed by a newline: the release version, such as `0.0.1`, for a released binary and `dev` for any other build.
@@ -39,4 +37,4 @@ Temporarily add uniquely marked blocks to Git `info/exclude` for selected overla
 
 From a configured workspace, run `workspace-overlay overlay mount`, inspect it with `workspace-overlay overlay status`, and stop it with `workspace-overlay overlay unmount`. Supply `--project alpha` to select that configured project.
 
-For isolated verification, run `workspace-overlay fixture create`, then `workspace-overlay overlay mount --config dev-workspace/workspace-overlay.toml --replace`. Inspect with `workspace-overlay overlay status --config dev-workspace/workspace-overlay.toml` and stop with `workspace-overlay overlay unmount --config dev-workspace/workspace-overlay.toml`. From the CLI checkout, `just dev`, `just status`, and `just stop` invoke those commands. `just dev` creates or reuses the workspace and mounts all configured projects and worktrees; optional `--project alpha` narrows the selection. Run `just test-local` to run end-to-end tests against `dev-workspace`. Edits remain in `dev-workspace` after stopping.
+For isolated verification from the CLI checkout, `just dev`, `just status`, and `just stop` invoke those commands. `just dev` creates or reuses `dev-workspace` and mounts all configured projects and worktrees; optional `--project alpha` narrows the selection. Run `just test-local` to run end-to-end tests against `dev-workspace`. Edits remain in `dev-workspace` after stopping.

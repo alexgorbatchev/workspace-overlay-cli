@@ -142,7 +142,7 @@ func TestEmbeddedSkillModesOffline(t *testing.T) {
 
 func TestAgentHelpPaths(t *testing.T) {
 	t.Setenv("AGENT", "1")
-	paths := [][]string{{"--help"}, {"overlay", "--help"}, {"overlay", "mount", "--help"}, {"overlay", "unmount", "--help"}, {"overlay", "status", "--help"}, {"fixture", "--help"}, {"fixture", "create", "--help"}, {"help", "fixture"}, {"skill", "--help"}, {"help", "overlay"}}
+	paths := [][]string{{"--help"}, {"overlay", "--help"}, {"overlay", "mount", "--help"}, {"overlay", "unmount", "--help"}, {"overlay", "status", "--help"}, {"skill", "--help"}, {"help", "overlay"}}
 	for _, path := range paths {
 		t.Run(strings.Join(path, " "), func(t *testing.T) {
 			stdout := new(bytes.Buffer)

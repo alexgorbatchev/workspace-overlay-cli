@@ -7,7 +7,7 @@ dev-bootstrap $dotfiles_dir=(env_var("HOME") / ".dotfiles"):
     bun run ./scripts/devBootstrap.ts
 
 dev *args:
-    go run ./cmd/workspace-overlay fixture create
+    go run ./cmd/fixture dev-workspace
     go run ./cmd/workspace-overlay overlay mount --config dev-workspace/workspace-overlay.toml --replace {{args}}
 
 stop *args:

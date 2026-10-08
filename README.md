@@ -132,7 +132,7 @@ Per-overlay `collision` and `write` fields override `[defaults]`. The supported 
 
 The runtime requires Linux. Directory moves across layers, hard links to merged files, rename flags, special-file creation, and native extended attributes are unsupported. Open merged files retain their original snapshots; reopen them to read updated source contributions. Merged files are held in memory and limited to 64 MiB total.
 
-A file that Git tracks in the project and that also has an overlay contribution reads as the joined content, so Git reports it as modified, and Git operations that must rewrite it (checkout, stash, restore, pull) fail while mounted; a `git commit -a` would record the overlay text in the project. Stop the overlay before such operations, or keep overlay files on paths the project does not track.
+When the calling process is Git, `workspace-overlay` serves the base project layer directly, so Git status stays clean and branch checkouts succeed. Overlay contributions can be delineated with start and end markers with relative paths from the project directory.
 
 # Options & Flags
 
@@ -164,12 +164,6 @@ Root options:
 | `--worktrees` | | `true` | Include Git worktree discovery. Recorded mounts remain included when false; unmount stops the selected owner and its mounts. |
 
 These overlay commands accept no positional arguments. `workspace-overlay help [command]` prints command help. `workspace-overlay skill` accepts no arguments or command-specific flags.
-
-`workspace-overlay fixture create` (no positional arguments):
-
-| Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--directory <path>` | | `dev-workspace` | Create or reuse the verification workspace, relative to the current directory. |
 
 
 # License

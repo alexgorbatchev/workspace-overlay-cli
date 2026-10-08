@@ -1,6 +1,11 @@
 build:
     go build -trimpath -o bin/workspace-overlay ./cmd/workspace-overlay
 
+# Build and replace the workspace-overlay payload used by the dotfiles shim
+dev-bootstrap $dotfiles_dir=(env_var("HOME") / ".dotfiles"):
+    revision="$(git rev-parse --short HEAD 2>/dev/null || echo dev)" && go build -trimpath -ldflags="-X main.version=999.0.0-dev.$revision" -o bin/workspace-overlay ./cmd/workspace-overlay
+    bun run ./scripts/devBootstrap.ts
+
 dev *args:
     go run ./cmd/workspace-overlay fixture create
     go run ./cmd/workspace-overlay overlay mount --config dev-workspace/workspace-overlay.toml --replace {{args}}

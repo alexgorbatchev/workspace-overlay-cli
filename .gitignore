@@ -1,5 +1,6 @@
 /bin/
 /workspace-overlay
+/dist/
 /.tmp/
 *.out
 *.test

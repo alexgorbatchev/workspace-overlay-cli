@@ -9,6 +9,8 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - Status: `just status [--project name]`
 - Test: `just test` (race detector plus the 90% coverage gate; always runs every package fresh, because a result replayed from the test cache carries coverage blocks of sources that have since changed); `go test -race -cover ./...` runs the tests without the gate.
 - Lint: `just lint` (`go mod tidy -diff`, `go vet ./...`, and `golangci-lint run ./...`; CI pins golangci-lint 2.11.4)
+- CI: `.github/workflows/ci.yml` runs on pushes and pull requests to `main`: `go mod tidy -diff`, build, vet, `go test -race ./...`, and golangci-lint.
+- Release: push an annotated `vX.Y.Z` tag. `.github/workflows/release.yml` repeats the CI checks and then publishes Linux amd64 and arm64 archives through GoReleaser (`.goreleaser.yml`), which sets `main.version` to the tag’s version. Check a configuration change with `goreleaser check` and `goreleaser release --snapshot --clean`, and update the download URL in the README’s `# Installation` for the new version.
 - Run: `go run ./cmd/workspace-overlay <args>` or `just run <args>`
 - Run AI: `AGENT=1 go run ./cmd/workspace-overlay <args>` or `just run-ai <args>`
 

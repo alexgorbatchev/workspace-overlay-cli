@@ -22,13 +22,24 @@ func TestOverlayDeletionProtection(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(specific, "empty"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"shared.txt", "merged.txt"} {
-		if errno := root.Unlink(ctx, name); errno != syscall.EPERM {
-			t.Fatalf("delete overlay %s: %v", name, errno)
-		}
-		if errno := root.Rename(ctx, name, root, "moved.txt", 0); errno != syscall.EPERM {
-			t.Fatalf("move overlay %s: %v", name, errno)
-		}
+	// Overlay-only path is protected from unlink and rename.
+	if errno := root.Unlink(ctx, "shared.txt"); errno != syscall.EPERM {
+		t.Fatalf("delete overlay shared.txt: %v", errno)
+	}
+	if errno := root.Rename(ctx, "shared.txt", root, "moved.txt", 0); errno != syscall.EPERM {
+		t.Fatalf("move overlay shared.txt: %v", errno)
+	}
+
+	// Colliding path cannot be renamed away, but unlinking removes the base copy first.
+	if errno := root.Rename(ctx, "merged.txt", root, "moved.txt", 0); errno != syscall.EPERM {
+		t.Fatalf("move overlay merged.txt: %v", errno)
+	}
+	if errno := root.Unlink(ctx, "merged.txt"); errno != 0 {
+		t.Fatalf("first unlink of merged.txt failed: %v", errno)
+	}
+	// Second unlink rejects because only overlay copy remains.
+	if errno := root.Unlink(ctx, "merged.txt"); errno != syscall.EPERM {
+		t.Fatalf("second unlink of merged.txt: %v", errno)
 	}
 	if errno := root.Rmdir(ctx, "empty"); errno != syscall.EPERM {
 		t.Fatalf("remove overlay directory: %v", errno)

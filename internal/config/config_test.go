@@ -17,6 +17,10 @@ func TestConfigOrderedSelections(t *testing.T) {
 path="repos/web"
 [projects.backend]
 path="repos/api"
+[[markers]]
+glob="*.md"
+start="<!-- BEGIN {name} ({path}) -->"
+end="<!-- END {name} -->"
 [[overlays]]
 name="common"
 source=".ai/common"
@@ -46,6 +50,9 @@ write="most-specific"
 	if len(selections[0].Sources) != 1 || len(selections[1].Sources) != 2 || selections[1].Sources[0].Name != "common" || selections[1].Sources[1].Glob != "**/*.md" {
 		t.Fatalf("ordered, deduplicated overlay selection: %+v", selections)
 	}
+	if len(selections[0].Markers) != 1 || selections[0].Markers[0].Glob != "*.md" {
+		t.Fatalf("markers not parsed: %+v", selections[0].Markers)
+	}
 	selected, err := c.Selections("frontend")
 	if err != nil || len(selected) != 1 || selected[0].Project != "frontend" {
 		t.Fatalf("single selection: %+v, %v", selected, err)
@@ -68,6 +75,9 @@ func TestConfigValidation(t *testing.T) {
 		{"bad collision", "version=1\n[defaults]\ncollision='replace'\n[projects.web]\npath='web'", "collision"},
 		{"bad write", "version=1\n[defaults]\nwrite='base'\n[projects.web]\npath='web'", "write"},
 		{"missing overlay name", valid + strings.Replace(overlay, "name='common'\n", "", 1), "unique"},
+		{"missing marker glob", valid + "\n[[markers]]\nstart='a'\nend='b'\n", "requires glob"},
+		{"missing marker start", valid + "\n[[markers]]\nglob='*.md'\nend='b'\n", "requires start"},
+		{"missing marker end", valid + "\n[[markers]]\nglob='*.md'\nstart='a'\n", "requires start and end"},
 		{"duplicate overlay", valid + overlay + overlay, "unique"},
 		{"missing source", valid + strings.Replace(overlay, "source='.ai/common'\n", "", 1), "source"},
 		{"missing selectors", valid + strings.Replace(overlay, "projects=['*']\n", "", 1), "selectors"},

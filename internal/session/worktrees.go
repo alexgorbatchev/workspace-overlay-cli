@@ -29,6 +29,7 @@ type mountPlan struct {
 // options of this invocation.
 type Selection struct {
 	Root, Project, Target string
+	Markers               []config.MarkerRule
 	Sources               []config.Source
 	// Replace stops an existing overlay of the project before mounting.
 	Replace bool
@@ -313,7 +314,7 @@ func Selections(cfg *config.Configuration, project string, replace, worktrees bo
 	}
 	var mounts []Selection
 	for _, s := range selections {
-		mounts = append(mounts, Selection{Root: s.Root, Project: s.Project, Target: s.Target, Sources: s.Sources, Replace: replace, Worktrees: worktrees})
+		mounts = append(mounts, Selection{Root: s.Root, Project: s.Project, Target: s.Target, Markers: s.Markers, Sources: s.Sources, Replace: replace, Worktrees: worktrees})
 	}
 	return mounts, nil
 }

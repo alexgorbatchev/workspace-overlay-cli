@@ -65,12 +65,19 @@ func preparePlan(ctx context.Context, selection Selection, target string, templa
 		return plan, fmt.Errorf("open layer %s: %w", pathname.Display(target), err)
 	}
 	plan.view.AddProject(backing)
+	if len(selection.Markers) > 0 {
+		var rules []overlayfs.MarkerRule
+		for _, m := range selection.Markers {
+			rules = append(rules, overlayfs.MarkerRule{Glob: m.Glob, Start: m.Start, End: m.End})
+		}
+		plan.view.SetMarkers(rules)
+	}
 	for _, source := range selection.Sources {
 		root, err := os.OpenRoot(source.Path)
 		if err != nil {
 			return plan, fmt.Errorf("open layer %s: %w", pathname.Display(source.Path), err)
 		}
-		plan.view.AddOverlay(root, source.Glob)
+		plan.view.AddOverlay(root, source.Name, source.Glob)
 	}
 	var exclude *gitexclude.File
 	if template != nil {

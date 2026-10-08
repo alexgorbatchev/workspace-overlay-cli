@@ -169,7 +169,7 @@ These overlay commands accept no positional arguments. `workspace-overlay help [
 
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--directory <path>` | | `.tmp/dev-workspace` | Create or reuse the verification workspace, relative to the current directory. |
+| `--directory <path>` | | `dev-workspace` | Create or reuse the verification workspace, relative to the current directory. |
 
 
 # License

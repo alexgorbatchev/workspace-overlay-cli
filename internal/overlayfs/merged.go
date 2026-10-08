@@ -5,11 +5,14 @@ import (
 	"context"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/logged"
 )
 
 // Merged files are staged in memory, so their size is bounded.
@@ -27,11 +30,57 @@ func mergedSize(parts []contribution) int64 {
 // Earlier contributions must remain byte-for-byte intact in a full-document save.
 type mergedFile struct {
 	mu                                    sync.Mutex
+	node                                  *node
+	parts                                 []contribution
+	markerRule                            *MarkerRule
 	file                                  *os.File
 	prefix, data                          []byte
 	attr                                  fuse.Attr
 	failed                                syscall.Errno
 	readable, writable, appendMode, dirty bool
+}
+
+func (n *node) renderMarkedData(parts []contribution, rule *MarkerRule) ([]byte, error) {
+	var buf bytes.Buffer
+	baseBytes, err := n.view.layers[parts[0].index].root.ReadFile(n.relativePath())
+	if err != nil {
+		return nil, err
+	}
+	buf.Write(baseBytes)
+
+	for i := 1; i < len(parts); i++ {
+		l := n.view.layers[parts[i].index]
+		name := l.name
+		if name == "" {
+			name = filepath.Base(l.root.Name())
+		}
+		relPath, err := filepath.Rel(n.view.layers[0].root.Name(), filepath.Join(l.root.Name(), n.relativePath()))
+		if err != nil {
+			relPath = filepath.Join(l.root.Name(), n.relativePath())
+		}
+
+		start := formatMarker(rule.Start, name, relPath)
+		end := formatMarker(rule.End, name, relPath)
+
+		overlayBytes, err := l.root.ReadFile(n.relativePath())
+		if err != nil {
+			return nil, err
+		}
+
+		if buf.Len() > 0 && buf.Bytes()[buf.Len()-1] != '\n' {
+			buf.WriteByte('\n')
+		}
+		buf.WriteString(start)
+		buf.WriteByte('\n')
+		buf.Write(overlayBytes)
+		if len(overlayBytes) > 0 && overlayBytes[len(overlayBytes)-1] != '\n' {
+			buf.WriteByte('\n')
+		}
+		buf.WriteString(end)
+		buf.WriteByte('\n')
+	}
+
+	return buf.Bytes(), nil
 }
 
 func (n *node) openMerged(ctx context.Context, flags uint32, parts []contribution) (fs.FileHandle, uint32, syscall.Errno) {
@@ -48,27 +97,51 @@ func (n *node) openMerged(ctx context.Context, flags uint32, parts []contributio
 		attributes(last.info, &attr)
 		return &noticeFile{data: notice, attr: attr.Attr}, fuse.FOPEN_DIRECT_IO, 0
 	}
-	if mergedSize(parts) > maxMergedSize {
-		return nil, 0, syscall.EFBIG
+	rule := n.view.findMarkerRule(n.relativePath())
+	var prefix, data []byte
+	if rule == nil {
+		if mergedSize(parts) > maxMergedSize {
+			return nil, 0, syscall.EFBIG
+		}
+		prefix, err = n.view.contents(n.relativePath(), parts[:len(parts)-1])
+		if err != nil {
+			log.Printf("render %s: %v", n.relativePath(), err)
+			return nil, 0, syscall.EIO
+		}
+		final, err := n.view.layers[last.index].root.ReadFile(n.relativePath())
+		if err != nil {
+			log.Printf("render %s: %v", n.relativePath(), err)
+			return nil, 0, syscall.EIO
+		}
+		data = append(bytes.Clone(prefix), final...)
+	} else {
+		data, err = n.renderMarkedData(parts, rule)
+		if err != nil {
+			log.Printf("render marked %s: %v", n.relativePath(), err)
+			return nil, 0, syscall.EIO
+		}
+		if int64(len(data)) > maxMergedSize {
+			return nil, 0, syscall.EFBIG
+		}
 	}
-	prefix, err := n.view.contents(n.relativePath(), parts[:len(parts)-1])
-	if err != nil {
-		log.Printf("render %s: %v", n.relativePath(), err)
-		return nil, 0, syscall.EIO
-	}
-	final, err := n.view.layers[last.index].root.ReadFile(n.relativePath())
-	if err != nil {
-		log.Printf("render %s: %v", n.relativePath(), err)
-		return nil, 0, syscall.EIO
-	}
-	data := append(bytes.Clone(prefix), final...)
 	f, err := n.view.layers[last.index].root.OpenFile(n.relativePath(), int(flags&^(syscall.O_TRUNC|syscall.O_APPEND|fuse.FMODE_EXEC)), 0)
 	if err != nil {
 		return nil, 0, fs.ToErrno(err)
 	}
 	var attr fuse.AttrOut
 	attributes(last.info, &attr)
-	h := &mergedFile{file: f, prefix: prefix, data: data, attr: attr.Attr, readable: flags&syscall.O_ACCMODE != syscall.O_WRONLY, writable: flags&syscall.O_ACCMODE != syscall.O_RDONLY, appendMode: flags&syscall.O_APPEND != 0}
+	h := &mergedFile{
+		node:       n,
+		parts:      parts,
+		markerRule: rule,
+		file:       f,
+		prefix:     prefix,
+		data:       data,
+		attr:       attr.Attr,
+		readable:   flags&syscall.O_ACCMODE != syscall.O_WRONLY,
+		writable:   flags&syscall.O_ACCMODE != syscall.O_RDONLY,
+		appendMode: flags&syscall.O_APPEND != 0,
+	}
 	if flags&syscall.O_TRUNC != 0 {
 		h.data = nil
 		h.dirty = true
@@ -106,7 +179,7 @@ func (f *mergedFile) Write(ctx context.Context, data []byte, off int64) (uint32,
 		return 0, syscall.EFBIG
 	}
 	end := int(off) + len(data)
-	if off < int64(len(f.prefix)) {
+	if f.markerRule == nil && off < int64(len(f.prefix)) {
 		prefixEnd := min(end, len(f.prefix))
 		if !bytes.Equal(data[:prefixEnd-int(off)], f.prefix[int(off):prefixEnd]) {
 			f.failed = syscall.EPERM
@@ -136,6 +209,39 @@ func (f *mergedFile) commit() syscall.Errno {
 	if !f.dirty {
 		return 0
 	}
+	if f.markerRule != nil {
+		if len(f.data) == 0 {
+			return 0
+		}
+		sections, err := parseMarkedDocument(f.data, f.parts, f.node.view.layers, f.markerRule)
+		if err != nil {
+			log.Printf("save marked merged file: %v (len data=%d)", err, len(f.data))
+			return fs.ToErrno(err)
+		}
+		for _, sec := range sections {
+			layer := f.node.view.layers[sec.index]
+			origBytes, err := layer.root.ReadFile(f.node.relativePath())
+			if err != nil {
+				return fs.ToErrno(err)
+			}
+			if !bytes.Equal(sec.data, origBytes) {
+				file, err := layer.root.OpenFile(f.node.relativePath(), os.O_WRONLY|os.O_TRUNC, 0)
+				if err != nil {
+					return fs.ToErrno(err)
+				}
+				if _, err := file.Write(sec.data); err != nil {
+					logged.Close(file)
+					return fs.ToErrno(err)
+				}
+				if err := file.Close(); err != nil {
+					return fs.ToErrno(err)
+				}
+			}
+		}
+		f.dirty = false
+		return 0
+	}
+
 	data, err := contributionBytes(f.data, f.prefix)
 	if err != nil {
 		log.Printf("save merged file: %v", err)

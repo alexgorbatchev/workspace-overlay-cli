@@ -19,6 +19,7 @@ import (
 )
 
 type layer struct {
+	name  string
 	root  *os.Root
 	rules *pathRules
 }
@@ -26,6 +27,7 @@ type layer struct {
 type View struct {
 	exclude      *gitexclude.File
 	layers       []layer
+	markers      []MarkerRule
 	mu           sync.Mutex
 	idMu         sync.Mutex
 	identities   map[identity]uint64
@@ -256,8 +258,8 @@ func (v *View) AddProject(root *os.Root) {
 }
 
 // AddOverlay adds an overlay source; its files matching glob join the view.
-func (v *View) AddOverlay(root *os.Root, glob string) {
-	v.layers = append(v.layers, layer{root: root, rules: &pathRules{glob: glob}})
+func (v *View) AddOverlay(root *os.Root, name, glob string) {
+	v.layers = append(v.layers, layer{name: name, root: root, rules: &pathRules{glob: glob}})
 }
 
 // SetExclude attaches the managed Git exclusions that are kept in step with the view.

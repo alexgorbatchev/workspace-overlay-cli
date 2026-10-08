@@ -3,13 +3,16 @@ build:
 
 dev *args:
     go run ./cmd/workspace-overlay fixture create
-    go run ./cmd/workspace-overlay overlay mount --config .tmp/dev-workspace/workspace-overlay.toml --replace {{args}}
+    go run ./cmd/workspace-overlay overlay mount --config dev-workspace/workspace-overlay.toml --replace {{args}}
 
 stop *args:
-    go run ./cmd/workspace-overlay overlay unmount --config .tmp/dev-workspace/workspace-overlay.toml {{args}}
+    go run ./cmd/workspace-overlay overlay unmount --config dev-workspace/workspace-overlay.toml {{args}}
 
 status *args:
-    go run ./cmd/workspace-overlay overlay status --config .tmp/dev-workspace/workspace-overlay.toml {{args}}
+    go run ./cmd/workspace-overlay overlay status --config dev-workspace/workspace-overlay.toml {{args}}
+
+test-local *args:
+    go test -race -v -run TestE2ELocalWorkspace ./cmd/workspace-overlay {{args}}
 
 run *args:
     go run ./cmd/workspace-overlay {{args}}

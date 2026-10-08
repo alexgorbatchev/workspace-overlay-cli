@@ -46,8 +46,8 @@ func sessionView(t *testing.T) (v *overlayfs.View, project, shared, specific str
 
 	v = &overlayfs.View{}
 	v.AddProject(projectRoot)
-	v.AddOverlay(sharedRoot, "**/*")
-	v.AddOverlay(specificRoot, "**/*")
+	v.AddOverlay(sharedRoot, "shared", "**/*")
+	v.AddOverlay(specificRoot, "specific", "**/*")
 	t.Cleanup(func() { v.Close() })
 	return v, project, shared, specific
 }

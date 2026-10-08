@@ -97,12 +97,22 @@ func (n *node) Getattr(ctx context.Context, handle fs.FileHandle, out *fuse.Attr
 	if err != nil {
 		return fs.ToErrno(err)
 	}
+	if isGitCaller(ctx) {
+		if parts[0].index == 0 {
+			attributes(parts[0].info, out)
+			return 0
+		}
+		return syscall.ENOENT
+	}
 	info := parts[len(parts)-1].info
 	attributes(info, out)
 	if info.Mode().IsRegular() && len(parts) > 1 {
 		out.Size = uint64(mergedSize(parts))
-		// A copy that cannot be sniffed keeps the merged size; opening the file reports the error.
-		if notice, err := n.view.collisionNotice(n.relativePath(), parts); err == nil && notice != nil {
+		if rule := n.view.findMarkerRule(n.relativePath()); rule != nil {
+			if data, err := n.renderMarkedData(parts, rule); err == nil {
+				out.Size = uint64(len(data))
+			}
+		} else if notice, err := n.view.collisionNotice(n.relativePath(), parts); err == nil && notice != nil {
 			out.Size = uint64(len(notice))
 		}
 	}
@@ -126,8 +136,15 @@ func (n *node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 	// A file contributed by one layer needs no merging. Serve it natively and
 	// through the kernel page cache, so descriptor semantics, including shared
 	// memory mappings, match the backing filesystem.
-	if len(parts) == 1 {
-		f, err := n.view.layers[last.index].root.OpenFile(n.relativePath(), int(flags&^(syscall.O_APPEND|fuse.FMODE_EXEC)), 0)
+	if len(parts) == 1 || isGitCaller(ctx) {
+		index := last.index
+		if isGitCaller(ctx) {
+			if parts[0].index != 0 {
+				return nil, 0, syscall.ENOENT
+			}
+			index = 0
+		}
+		f, err := n.view.layers[index].root.OpenFile(n.relativePath(), int(flags&^(syscall.O_APPEND|fuse.FMODE_EXEC)), 0)
 		if err != nil {
 			return nil, 0, fs.ToErrno(err)
 		}

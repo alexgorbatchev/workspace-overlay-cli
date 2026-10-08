@@ -4,10 +4,11 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 
 ## Commands
 - Build: `just build` (writes `bin/workspace-overlay` with source paths removed)
-- Dev: `just dev [--project name]` (shared fixtures in `.tmp/dev-workspace`, all projects and worktrees by default)
+- Dev: `just dev [--project name]` (shared fixtures in `dev-workspace`, all projects and worktrees by default)
 - Stop: `just stop [--project name]`
 - Status: `just status [--project name]`
 - Test: `just test` (race detector plus the 90% coverage gate; always runs every package fresh, because a result replayed from the test cache carries coverage blocks of sources that have since changed); `go test -race -cover ./...` runs the tests without the gate.
+- Test local / E2E: `just test-local`
 - Lint: `just lint` (`go mod tidy -diff`, `go vet ./...`, and `golangci-lint run ./...`; CI pins golangci-lint 2.11.4)
 - CI: `.github/workflows/ci.yml` runs on pushes and pull requests to `main`: `go mod tidy -diff`, build, vet, `go test -race ./...`, and golangci-lint.
 - Release: push an annotated `vX.Y.Z` tag. `.github/workflows/release.yml` repeats the CI checks and then publishes Linux amd64 and arm64 archives through GoReleaser (`.goreleaser.yml`), which sets `main.version` to the tag’s version. Check a configuration change with `goreleaser check` and `goreleaser release --snapshot --clean`, and update the download URL in the README’s `# Installation` for the new version.
@@ -52,14 +53,15 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - Session tests never wait for the watcher with a fixed sleep: `awaitReconcile` in `internal/session/watcher_test.go` registers a worktree and waits for its mount, which proves a reconcile ran after the call. `stall` in `internal/session/interruption_test.go` makes one external command hang so a test can stop the session while it runs.
 - Never touch a served mount from the serving process: a process killed while one of its threads is inside a file operation on a mount it serves can never exit, because the request waits for an answer only that process could give (a stuck one is released with `echo 1 > /sys/fs/fuse/connections/<id>/abort`). So `View.Mount` leaves out go-fuse’s `Server.WaitMount`, which opens a file on the new mount; a running session inspects its project through the directory opened before mounting (`projectRunner.targets`) and asks `findmnt` which file system holds a candidate worktree before looking at it (`holdingType`). `TestKilledOwnerAlwaysExits` kills an owner inside the first millisecond after its mounts appear.
 - Tests do read mounts served by their own process, and must prepare each one first or the Go runtime can lock up on its first open: `overlayfs` tests call `Server.WaitMount` in `mountedProject`, `session` tests go through `waitMount` or `selfReadable`. A missed site hangs deterministically under `GOMAXPROCS=1 go test ./internal/overlayfs/ ./internal/session/`.
-- Git tracking: a file that Git tracks in the project and that also has an overlay contribution reads as the joined content, so Git reports it as modified, and Git operations that rewrite it (checkout, stash, restore, pull) fail while mounted.
+- Git tracking: when the caller is Git, FUSE serves project backing bytes directly so Git status remains clean and Git branch checkouts succeed.
 
 ## Live verification
-- Run `just dev` to create or reuse `.tmp/dev-workspace` and mount `alpha`, `beta`, and `.workspaces/one/{alpha,beta}` within that workspace. Use `just status` and `just stop` from another terminal. Optional `--project alpha` selects one project.
+- Run `just dev` to create or reuse `dev-workspace` and mount `alpha`, `beta`, and `.workspaces/one/{alpha,beta}` within that workspace. Use `just status` and `just stop` from another terminal. Optional `--project alpha` selects one project.
 - Integration tests use `fixture.Create` and the embedded `internal/fixture/testdata/workspace/` data, including the shipped example configuration. Fixture Git commands disable hooks and signing and exclude inherited `GIT_*` overrides.
-- Append to `.tmp/dev-workspace/alpha/AGENTS.md`; verify the final contribution in `.tmp/dev-workspace/.ai/alpha/AGENTS.md` and a fresh read from `.tmp/dev-workspace/.workspaces/one/alpha/AGENTS.md`. Nested colliding notes are at `docs/nested/notes.md`; shared and project skills appear in `.agents/skills/`.
-- Add another worktree while mounted with `git -C .tmp/dev-workspace/alpha worktree add -b live-check ../.workspaces/two/alpha main`; `just status` should include it after watcher reconciliation. Stop overlays before `git worktree remove`.
-- Runtime fixture files are ignored under `.tmp/`. Stop removes managed exclusions and mounts; retain fixture edits and Git history for subsequent starts. Failed initialization retains an incomplete directory and refuses reuse rather than overwriting it.
+- Append to `dev-workspace/alpha/AGENTS.md`; verify the final contribution in `dev-workspace/.ai/alpha/AGENTS.md` and a fresh read from `dev-workspace/.workspaces/one/alpha/AGENTS.md`. Nested colliding notes are at `docs/nested/notes.md`; shared and project skills appear in `.agents/skills/`.
+- Add another worktree while mounted with `git -C dev-workspace/alpha worktree add -b live-check ../.workspaces/two/alpha main`; `just status` should include it after watcher reconciliation. Stop overlays before `git worktree remove`.
+- Verification workspace files are ignored under `dev-workspace/`. Stop removes managed exclusions and mounts; retain fixture edits and Git history for subsequent starts. Failed initialization retains an incomplete directory and refuses reuse rather than overwriting it.
+- Run `just test-local` to run automated end-to-end integration tests exercising real mounts, Git status, two-way writes, and unmount against `dev-workspace`.
 - For a real workspace use `just run overlay mount --config path/to/workspace-overlay.toml` instead of the fixture recipes.
 
 ## Boundaries

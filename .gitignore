@@ -2,6 +2,7 @@
 /workspace-overlay
 /dist/
 /.tmp/
+/dev-workspace/
 *.out
 *.test
 *.prof

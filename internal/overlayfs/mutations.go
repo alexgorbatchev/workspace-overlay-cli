@@ -106,6 +106,14 @@ func (n *node) Unlink(ctx context.Context, name string) syscall.Errno {
 	if parts[0].info.IsDir() {
 		return syscall.EISDIR
 	}
+	// When a path exists in the backing project and in overlay layers,
+	// removing it removes the project backing copy so the path falls back to the overlay.
+	if len(parts) > 1 && parts[0].index == 0 {
+		if err := n.view.layers[0].root.Remove(child); err != nil {
+			return fs.ToErrno(err)
+		}
+		return fs.ToErrno(n.view.changed(0, child))
+	}
 	last := parts[len(parts)-1]
 	key := fileIdentity(last.index, last.info)
 	// Overlay sources stay protected; only entries this session created may go.

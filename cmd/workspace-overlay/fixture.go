@@ -20,7 +20,7 @@ func fixtureCommand() *cobra.Command {
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), pathname.Display(configFile))
 		return err
 	}}
-	create.Flags().StringVar(&directory, "directory", ".tmp/dev-workspace", "Workspace directory (relative to current directory)")
+	create.Flags().StringVar(&directory, "directory", "dev-workspace", "Workspace directory (relative to current directory)")
 	group.AddCommand(create)
 	return group
 }

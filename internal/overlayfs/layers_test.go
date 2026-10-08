@@ -65,7 +65,7 @@ func mountedProject(t *testing.T, project string, sources ...string) *View {
 		if err != nil {
 			t.Fatal(err)
 		}
-		v.AddOverlay(sourceRoot, "**/*")
+		v.AddOverlay(sourceRoot, filepath.Base(source), "**/*")
 	}
 	if err := v.RefreshPaths(); err != nil {
 		t.Fatal(err)

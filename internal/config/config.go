@@ -36,10 +36,17 @@ type Overlay struct {
 	Write     string   `toml:"write"`
 }
 
+type MarkerRule struct {
+	Glob  string `toml:"glob"`
+	Start string `toml:"start"`
+	End   string `toml:"end"`
+}
+
 // Configuration is the workspace overlay configuration loaded from workspace-overlay.toml.
 type Configuration struct {
 	Version  int                `toml:"version"`
 	Defaults Options            `toml:"defaults"`
+	Markers  []MarkerRule       `toml:"markers"`
 	Projects map[string]Project `toml:"projects"`
 	Overlays []Overlay          `toml:"overlays"`
 	root     string
@@ -53,6 +60,7 @@ type Source struct {
 // Selection is one configured project with the overlay sources that apply to it.
 type Selection struct {
 	Root, Project, Target string
+	Markers               []MarkerRule
 	Sources               []Source
 }
 
@@ -125,6 +133,14 @@ func (c *Configuration) validate() error {
 	}
 	if c.Defaults.Write == "" {
 		c.Defaults.Write = "most-specific"
+	}
+	for i, m := range c.Markers {
+		if m.Glob == "" {
+			return fmt.Errorf("marker %d requires glob", i)
+		}
+		if m.Start == "" || m.End == "" {
+			return fmt.Errorf("marker %d requires start and end", i)
+		}
 	}
 	if err := validateOptions(c.Defaults.Collision, c.Defaults.Write); err != nil {
 		return err
@@ -218,7 +234,7 @@ func (c *Configuration) Selections(project string) ([]Selection, error) {
 	sort.Strings(names)
 	var selections []Selection
 	for _, name := range names {
-		selection := Selection{Root: c.root, Project: name, Target: c.Projects[name].Path}
+		selection := Selection{Root: c.root, Project: name, Target: c.Projects[name].Path, Markers: c.Markers}
 		for _, overlay := range c.Overlays {
 			for _, selector := range overlay.Projects {
 				matched, err := doublestar.Match(selector, name)

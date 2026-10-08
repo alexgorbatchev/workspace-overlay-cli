@@ -4,6 +4,11 @@ version = 1
 collision = "concat"
 write = "most-specific"
 
+[[markers]]
+glob = "*.md"
+start = "<!-- BEGIN WORKSPACE-OVERLAY: {name} ({path}) -->"
+end   = "<!-- END WORKSPACE-OVERLAY: {name} -->"
+
 [projects.alpha]
 path = "alpha"
 

@@ -31,6 +31,12 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runContext(ctx, args, stdout, stderr)
+}
+
+func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	root, err := newRootCommand()
 	if err != nil {
 		return err
@@ -43,8 +49,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	cmd, err := root.ExecuteContextC(ctx)
 	if err != nil && !parsed {
 		if _, writeErr := fmt.Fprintln(stderr, cmd.UsageString()); writeErr != nil {

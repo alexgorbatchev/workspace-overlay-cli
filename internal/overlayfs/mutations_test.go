@@ -576,3 +576,27 @@ func TestNodeMutationsErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestUnlinkCollidingFileRemovesProjectBacking(t *testing.T) {
+	root, base, shared, _ := setupTestRootNode(t)
+	ctx := context.Background()
+	scratch.Write(t, filepath.Join(base, "agents.md"), "project rules")
+	scratch.Write(t, filepath.Join(shared, "agents.md"), "shared rules")
+
+	// 1. First unlink should remove the base project copy and succeed
+	if errno := root.Unlink(ctx, "agents.md"); errno != 0 {
+		t.Fatalf("first unlink failed with errno %v", errno)
+	}
+	if _, err := os.Stat(filepath.Join(base, "agents.md")); !os.IsNotExist(err) {
+		t.Fatalf("base copy still exists after unlink")
+	}
+	if _, err := os.Stat(filepath.Join(shared, "agents.md")); err != nil {
+		t.Fatalf("shared overlay copy was removed: %v", err)
+	}
+
+	// 2. Second unlink should fail with EPERM because only overlay copy remains
+	if errno := root.Unlink(ctx, "agents.md"); errno != syscall.EPERM {
+		t.Fatalf("second unlink returned %v, want EPERM", errno)
+	}
+}
+

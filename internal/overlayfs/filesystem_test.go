@@ -281,3 +281,74 @@ func TestNodeErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestGitCallerRouting(t *testing.T) {
+	root, baseDir, sharedDir, _ := setupTestRootNode(t)
+	scratch.Write(t, filepath.Join(baseDir, "test.txt"), "BASE")
+	scratch.Write(t, filepath.Join(sharedDir, "test.txt"), "OVERLAY")
+
+	orig := readProcessComm
+	defer func() { readProcessComm = orig }()
+
+	readProcessComm = func(pid uint32) string {
+		if pid == 77777 {
+			return "git"
+		}
+		return "other"
+	}
+
+	gitCtx := fuse.NewContext(context.Background(), &fuse.Caller{Pid: 77777})
+	nonGitCtx := fuse.NewContext(context.Background(), &fuse.Caller{Pid: 88888})
+
+	child := &node{view: root.view, path: "test.txt"}
+
+	// 1. Getattr: Git sees only base size (4 bytes), non-Git sees merged size (11 bytes)
+	var gitAttr fuse.AttrOut
+	if errno := child.Getattr(gitCtx, nil, &gitAttr); errno != 0 {
+		t.Fatalf("Getattr for git failed: %v", errno)
+	}
+	if gitAttr.Size != 4 {
+		t.Errorf("Getattr for git got size %d, want 4", gitAttr.Size)
+	}
+
+	var nonGitAttr fuse.AttrOut
+	if errno := child.Getattr(nonGitCtx, nil, &nonGitAttr); errno != 0 {
+		t.Fatalf("Getattr for non-git failed: %v", errno)
+	}
+	if nonGitAttr.Size != 11 {
+		t.Errorf("Getattr for non-git got size %d, want 11", nonGitAttr.Size)
+	}
+
+	// 2. Open: Git reads only base content ("BASE"), non-Git reads merged content ("BASEOVERLAY")
+	hGit, _, errno := child.Open(gitCtx, syscall.O_RDONLY)
+	if errno != 0 {
+		t.Fatalf("Open for git failed: %v", errno)
+	}
+	defer func() { _ = hGit.(fs.FileReleaser).Release(gitCtx) }()
+
+	dest := make([]byte, 20)
+	res, errno := hGit.(fs.FileReader).Read(gitCtx, dest, 0)
+	if errno != 0 {
+		t.Fatalf("Read for git failed: %v", errno)
+	}
+	data, _ := res.Bytes(dest)
+	if string(data) != "BASE" {
+		t.Errorf("Read for git got %q, want %q", string(data), "BASE")
+	}
+
+	hNonGit, _, errno := child.Open(nonGitCtx, syscall.O_RDONLY)
+	if errno != 0 {
+		t.Fatalf("Open for non-git failed: %v", errno)
+	}
+	defer func() { _ = hNonGit.(fs.FileReleaser).Release(nonGitCtx) }()
+
+	res, errno = hNonGit.(fs.FileReader).Read(nonGitCtx, dest, 0)
+	if errno != 0 {
+		t.Fatalf("Read for non-git failed: %v", errno)
+	}
+	data, _ = res.Bytes(dest)
+	if string(data) != "BASEOVERLAY" {
+		t.Errorf("Read for non-git got %q, want %q", string(data), "BASEOVERLAY")
+	}
+}
+

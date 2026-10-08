@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/fsnotify/fsnotify"
 
@@ -107,8 +108,11 @@ func (n *notifications) sync() error {
 	for _, name := range n.watcher.WatchList() {
 		current[name] = true
 		if !desired[name] {
-			if err := n.watcher.Remove(name); err != nil && !errors.Is(err, fsnotify.ErrNonExistentWatch) {
-				return err
+			// The kernel drops the watch on a deleted directory by itself.
+			// Dropping it again fails as unknown, or as invalid while the
+			// watcher has not yet processed the deletion.
+			if err := n.watcher.Remove(name); err != nil && !errors.Is(err, fsnotify.ErrNonExistentWatch) && !errors.Is(err, syscall.EINVAL) {
+				return fmt.Errorf("stop watching %s: %w", name, err)
 			}
 		}
 	}

@@ -122,3 +122,29 @@ func TestNotificationErrors(t *testing.T) {
 		})
 	}
 }
+
+// A watched directory can be deleted before the watcher has processed the
+// news. The kernel has dropped its watch by then, so dropping it again fails,
+// and that must not stop the session.
+func TestSyncToleratesWatchesTheKernelAlreadyDropped(t *testing.T) {
+	v, base, _, _ := sessionView(t)
+	scratch.GitRepo(t, base)
+	addWorktree(t, base, "linked", filepath.Join(t.TempDir(), "linked"))
+	n, err := newNotifications(context.Background(), mountPlan{target: base, view: v}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := n.close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	// Nothing reads the watcher's events here, so it still lists the watch.
+	if err := os.RemoveAll(filepath.Join(base, ".git", "worktrees", "linked")); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.sync(); err != nil {
+		t.Fatalf("sync after a watched directory was deleted: %v", err)
+	}
+}

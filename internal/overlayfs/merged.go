@@ -3,7 +3,6 @@ package overlayfs
 import (
 	"bytes"
 	"context"
-	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -13,8 +12,6 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-
-	"github.com/alexgorbatchev/workspace-overlay-cli/internal/logged"
 )
 
 // Merged files are staged in memory, so their size is bounded.
@@ -153,7 +150,39 @@ func (n *node) openMerged(ctx context.Context, flags uint32, parts []contributio
 		h.data = nil
 		h.dirty = true
 	}
+	if h.writable {
+		n.view.track(n.relativePath(), h)
+	}
 	return h, fuse.FOPEN_DIRECT_IO, 0
+}
+
+// track records a merged file that was opened for writing.
+func (v *View) track(name string, f *mergedFile) {
+	v.openMu.Lock()
+	defer v.openMu.Unlock()
+	if v.open == nil {
+		v.open = make(map[string][]*mergedFile)
+	}
+	v.open[name] = append(v.open[name], f)
+}
+
+// forget drops a merged file that was closed.
+func (v *View) forget(name string, f *mergedFile) {
+	v.openMu.Lock()
+	defer v.openMu.Unlock()
+	rest := slices.DeleteFunc(v.open[name], func(open *mergedFile) bool { return open == f })
+	if len(rest) == 0 {
+		delete(v.open, name)
+		return
+	}
+	v.open[name] = rest
+}
+
+// writers returns the merged files at name that are open for writing.
+func (v *View) writers(name string) []*mergedFile {
+	v.openMu.Lock()
+	defer v.openMu.Unlock()
+	return slices.Clone(v.open[name])
 }
 
 func (f *mergedFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
@@ -226,34 +255,8 @@ func (f *mergedFile) commit() syscall.Errno {
 			log.Printf("save marked merged file: %v (len data=%d)", err, len(f.data))
 			return fs.ToErrno(err)
 		}
-		for _, sec := range sections {
-			layer := f.node.view.layers[sec.index]
-			origBytes, err := layer.root.ReadFile(f.node.relativePath())
-			if errors.Is(err, os.ErrNotExist) && sec.index == 0 {
-				// The project copy was removed; text in its section brings it back.
-				if len(sec.data) > 0 {
-					if err := f.node.view.restore(f.node.relativePath(), sec.data); err != nil {
-						return fs.ToErrno(err)
-					}
-				}
-				continue
-			}
-			if err != nil {
-				return fs.ToErrno(err)
-			}
-			if !bytes.Equal(sec.data, origBytes) {
-				file, err := layer.root.OpenFile(f.node.relativePath(), os.O_WRONLY|os.O_TRUNC, 0)
-				if err != nil {
-					return fs.ToErrno(err)
-				}
-				if _, err := file.Write(sec.data); err != nil {
-					logged.Close(file)
-					return fs.ToErrno(err)
-				}
-				if err := file.Close(); err != nil {
-					return fs.ToErrno(err)
-				}
-			}
+		if err := f.node.view.saveSections(f.node.relativePath(), sections, f.node.view.restore); err != nil {
+			return fs.ToErrno(err)
 		}
 		f.dirty = false
 		return 0
@@ -312,6 +315,7 @@ func (f *mergedFile) Release(ctx context.Context) syscall.Errno {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	errno := f.commit()
+	f.node.view.forget(f.node.relativePath(), f)
 	err := f.file.Close()
 	if errno != 0 {
 		return errno

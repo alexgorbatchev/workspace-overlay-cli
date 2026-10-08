@@ -524,7 +524,7 @@ func TestNodeMutationsErrors(t *testing.T) {
 		if err := os.Mkdir(filepath.Join(root.view.layers[0].root.Name(), "dest_is_dir"), 0755); err != nil {
 			t.Fatal(err)
 		}
-		orig, errno := root.prepareSave(0, "some_source", "dest_is_dir")
+		orig, _, errno := root.prepareSave(0, "some_source", "dest_is_dir")
 		if errno != 0 || orig != nil {
 			t.Errorf("prepareSave on directory dest should return nil, 0; got %v, %v", orig, errno)
 		}
@@ -571,7 +571,7 @@ func TestNodeMutationsErrors(t *testing.T) {
 		for _, layer := range root.view.layers[:2] {
 			scratch.Write(t, filepath.Join(layer.root.Name(), "merged_save.txt"), "content\n")
 		}
-		if _, errno := root.prepareSave(0, "nonexistent_source", "merged_save.txt"); errno != syscall.ENOENT {
+		if _, _, errno := root.prepareSave(0, "nonexistent_source", "merged_save.txt"); errno != syscall.ENOENT {
 			t.Errorf("prepareSave with a missing staged file = %v, want ENOENT", errno)
 		}
 	})

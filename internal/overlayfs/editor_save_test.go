@@ -3,6 +3,7 @@ package overlayfs
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -336,4 +337,203 @@ func TestDefaultMarkerRulesMatchFileNames(t *testing.T) {
 			t.Errorf("%s: rule = %+v, want markers starting with %q", tt.name, rule, tt.start)
 		}
 	}
+}
+
+// saveByRename replaces file with content the way programs do that save
+// atomically: they write a temporary file beside it and rename that over it.
+func saveByRename(t *testing.T, file, content string) error {
+	t.Helper()
+	staged := scratch.Write(t, file+".tmp", content)
+	return os.Rename(staged, file)
+}
+
+// A file renamed over a marked document is that document, saved whole. Each
+// section goes to its own source, as it does when the document is written in
+// place. Before, everything after the project's text, marker lines included,
+// was written into an overlay source.
+func TestRenameOverMarkedDocumentSavesEverySectionToItsSource(t *testing.T) {
+	tests := []struct {
+		name     string
+		overlays []string
+		edit     string
+	}{
+		{"one overlay, project section edited", []string{"workspace"}, "project"},
+		{"one overlay, overlay section edited", []string{"workspace"}, "workspace"},
+		{"two overlays, project section edited", []string{"workspace", "alpha"}, "project"},
+		{"two overlays, first overlay edited", []string{"workspace", "alpha"}, "workspace"},
+		{"two overlays, last overlay edited", []string{"workspace", "alpha"}, "alpha"},
+		{"two overlays, nothing edited", []string{"workspace", "alpha"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc := mountMarkedDocument(t, tt.overlays...)
+			want := map[string]string{"project": projectText, "workspace": workspaceText, "alpha": alphaText}
+			if tt.edit != "" {
+				want[tt.edit] += "- added while editing\n"
+			}
+			content := want["project"]
+			for _, name := range tt.overlays {
+				content += section(name, want[name])
+			}
+
+			if err := saveByRename(t, doc.file, content); err != nil {
+				t.Fatalf("rename over the document = %v", err)
+			}
+
+			if got, _ := doc.projectCopy(t); got != want["project"] {
+				t.Errorf("project copy = %q, want %q", got, want["project"])
+			}
+			for _, name := range tt.overlays {
+				if got := string(scratch.Read(t, doc.sources[name])); got != want[name] {
+					t.Errorf("%s source = %q, want %q", name, got, want[name])
+				}
+			}
+			if got := string(scratch.Read(t, doc.file)); got != content {
+				t.Errorf("document = %q, want %q", got, content)
+			}
+			if _, err := os.Lstat(doc.file + ".tmp"); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("temporary file was left behind: %v", err)
+			}
+		})
+	}
+}
+
+// A file without the document's markers cannot be split into its sections,
+// so it is refused and nothing is changed.
+func TestRenameOverMarkedDocumentWithoutMarkersIsRefused(t *testing.T) {
+	doc := mountMarkedDocument(t, "workspace", "alpha")
+
+	err := saveByRename(t, doc.file, projectText+section("workspace", workspaceText)+"no alpha section\n")
+
+	if !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("rename of a document that lost a section = %v, want EPERM", err)
+	}
+	if got, _ := doc.projectCopy(t); got != projectText {
+		t.Errorf("project copy = %q, want it unchanged", got)
+	}
+	for name, text := range map[string]string{"workspace": workspaceText, "alpha": alphaText} {
+		if got := string(scratch.Read(t, doc.sources[name])); got != text {
+			t.Errorf("%s source = %q, want it unchanged", name, got)
+		}
+	}
+}
+
+// The project section of a document whose project copy was removed takes a
+// renamed-over save as well.
+func TestRenameOverDocumentWithRemovedProjectCopy(t *testing.T) {
+	doc := mountMarkedDocument(t, "workspace")
+	if err := os.Remove(doc.file); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := saveByRename(t, doc.file, "# Back\n"+section("workspace", workspaceText+"- edited\n")); err != nil {
+		t.Fatalf("rename over the document = %v", err)
+	}
+
+	if got, _ := doc.projectCopy(t); got != "# Back\n" {
+		t.Errorf("project copy = %q, want the text of its section", got)
+	}
+	if got := string(scratch.Read(t, doc.sources["workspace"])); got != workspaceText+"- edited\n" {
+		t.Errorf("workspace source = %q, want its edited section", got)
+	}
+}
+
+// git runs Git in the mounted project and returns its output.
+func (d markedDocument) git(t *testing.T, args ...string) string {
+	t.Helper()
+	identity := []string{"-C", filepath.Dir(d.file), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"}
+	out, err := exec.Command("git", append(identity, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return string(out)
+}
+
+// Git replaces a file by removing it and creating it again. It is shown only
+// the project's files, so the overlay's copy must not stand in its way.
+// Before, the removal went through and the creation was refused, which left
+// the project copy deleted.
+func TestGitRestoresFileThatAnOverlayAlsoHas(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(t *testing.T, doc markedDocument)
+	}{
+		{"modified", func(t *testing.T, doc markedDocument) {
+			scratch.Write(t, doc.file, "# Changed\n"+section("workspace", workspaceText))
+		}},
+		{"removed", func(t *testing.T, doc markedDocument) {
+			if err := os.Remove(doc.file); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc := mountMarkedDocument(t, "workspace")
+			doc.git(t, "init", "--quiet", "--initial-branch=main")
+			doc.git(t, "add", "AGENTS.md")
+			doc.git(t, "commit", "--quiet", "-m", "project file")
+			tt.change(t, doc)
+			if status := doc.git(t, "status", "--porcelain"); status == "" {
+				t.Fatal("Git does not see the change the test made")
+			}
+
+			doc.git(t, "checkout", "--", "AGENTS.md")
+
+			if got, _ := doc.projectCopy(t); got != projectText {
+				t.Errorf("project copy = %q, want the committed text", got)
+			}
+			if status := doc.git(t, "status", "--porcelain"); status != "" {
+				t.Errorf("git status after the checkout = %q, want it clean", status)
+			}
+			if got, want := string(scratch.Read(t, doc.file)), projectText+section("workspace", workspaceText); got != want {
+				t.Errorf("document = %q, want %q", got, want)
+			}
+			if got := string(scratch.Read(t, doc.sources["workspace"])); got != workspaceText {
+				t.Errorf("workspace source = %q, want it untouched", got)
+			}
+		})
+	}
+}
+
+// Opening a file with O_TRUNC, as a shell redirection and most programs that
+// write a whole file do, empties it before the new content arrives. Content
+// shorter than the old must not be saved with the end of the old content.
+func TestShorterContentReplacesMergedFile(t *testing.T) {
+	t.Run("marked", func(t *testing.T) {
+		doc := mountMarkedDocument(t, "workspace")
+		content := "# P\n" + section("workspace", "# W\n")
+
+		scratch.Write(t, doc.file, content)
+
+		if got, _ := doc.projectCopy(t); got != "# P\n" {
+			t.Errorf("project copy = %q, want %q", got, "# P\n")
+		}
+		if got := string(scratch.Read(t, doc.sources["workspace"])); got != "# W\n" {
+			t.Errorf("workspace source = %q, want %q", got, "# W\n")
+		}
+		if got := string(scratch.Read(t, doc.file)); got != content {
+			t.Errorf("document = %q, want %q", got, content)
+		}
+	})
+	t.Run("joined without markers", func(t *testing.T) {
+		doc := mountMarkedDocument(t, "workspace")
+		dir := filepath.Dir(doc.file)
+		if err := doc.view.Project().WriteFile("notes.txt", []byte("project\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		source := scratch.Write(t, filepath.Join(filepath.Dir(doc.sources["workspace"]), "notes.txt"), "a long overlay contribution\n")
+		if err := doc.view.RefreshPaths(); err != nil {
+			t.Fatal(err)
+		}
+
+		scratch.Write(t, filepath.Join(dir, "notes.txt"), "project\nshort\n")
+
+		if got := string(scratch.Read(t, source)); got != "short\n" {
+			t.Errorf("overlay source = %q, want %q", got, "short\n")
+		}
+		if got := string(scratch.Read(t, filepath.Join(dir, "notes.txt"))); got != "project\nshort\n" {
+			t.Errorf("file = %q, want %q", got, "project\nshort\n")
+		}
+	})
 }

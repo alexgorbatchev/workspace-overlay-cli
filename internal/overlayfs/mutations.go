@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"slices"
 	"syscall"
 	"time"
 
@@ -19,11 +20,19 @@ func (n *node) Create(ctx context.Context, name string, flags, mode uint32, out 
 	n.view.mu.Lock()
 	defer n.view.mu.Unlock()
 	child := &node{view: n.view, path: path.Join(n.relativePath(), name)}
-	index, err := n.view.destination(child.relativePath())
-	if err != nil {
-		return nil, nil, 0, fs.ToErrno(err)
+	var index int
+	var err error
+	if isGitCaller(ctx) {
+		// Git is shown the project's files only, so only those can be in the
+		// way of a file it creates, and the project is where the file goes.
+		_, err = n.view.layers[0].root.Lstat(child.relativePath())
+	} else {
+		if index, err = n.view.destination(child.relativePath()); err != nil {
+			return nil, nil, 0, fs.ToErrno(err)
+		}
+		_, err = n.view.resolve(child.relativePath())
 	}
-	if _, err := n.view.resolve(child.relativePath()); err == nil {
+	if err == nil {
 		return nil, nil, 0, syscall.EEXIST
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, nil, 0, fs.ToErrno(err)
@@ -169,6 +178,18 @@ func (n *node) Setattr(ctx context.Context, handle fs.FileHandle, in *fuse.SetAt
 	// to apply staged-content rules for merged files.
 	_, sizeSet := in.GetSize()
 	if parts[0].info.Mode().IsRegular() && sizeSet {
+		// The kernel truncates a file that is opened with O_TRUNC by its
+		// path, after opening it. The open file holds the content it will
+		// save, so the new size has to reach it: otherwise shorter content
+		// written next would be saved with the end of the old content.
+		if writers := n.view.writers(n.relativePath()); len(writers) > 0 {
+			for _, writer := range writers {
+				if errno := writer.Setattr(ctx, in, out); errno != 0 {
+					return errno
+				}
+			}
+			return 0
+		}
 		h, _, errno := n.Open(ctx, syscall.O_RDWR)
 		if errno != 0 {
 			return errno
@@ -287,7 +308,7 @@ func (n *node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	if err != nil {
 		return fs.ToErrno(err)
 	}
-	original, errno := n.prepareSave(sourceIndex, sourcePath, destPath)
+	original, earlier, errno := n.prepareSave(sourceIndex, sourcePath, destPath)
 	if errno != 0 {
 		return errno
 	}
@@ -296,6 +317,12 @@ func (n *node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 		if err := n.view.layers[sourceIndex].root.WriteFile(sourcePath, original, parts[len(parts)-1].info.Mode().Perm()); err != nil {
 			log.Printf("restore unsuccessful save: %v", err)
 			return syscall.EIO
+		}
+	}
+	if errno == 0 && len(earlier) > 0 {
+		// The renamed file carried the last section; the others follow it.
+		if err := n.view.saveSections(destPath, earlier, n.view.restoreLocked); err != nil {
+			return fs.ToErrno(err)
 		}
 	}
 	if errno == 0 {
@@ -309,40 +336,60 @@ func (n *node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	return errno
 }
 
-func (n *node) prepareSave(index int, source, dest string) ([]byte, syscall.Errno) {
+// prepareSave gets the file at source ready to replace the merged file at
+// dest, of which it holds a full copy: it cuts the file down to the text of
+// the last layer, the one the rename puts it in. It returns the file's
+// original content, for putting back if the rename fails, and for a marked
+// document the sections of the other layers, to be saved once it succeeds.
+func (n *node) prepareSave(index int, source, dest string) (original []byte, earlier []parsedSection, errno syscall.Errno) {
 	parts, err := n.view.resolve(dest)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, 0
+		return nil, nil, 0
 	}
 	if err != nil {
-		return nil, fs.ToErrno(err)
+		return nil, nil, fs.ToErrno(err)
 	}
-	if !parts[0].info.Mode().IsRegular() || len(parts) == 1 {
-		return nil, 0
+	if !parts[0].info.Mode().IsRegular() {
+		return nil, nil, 0
 	}
-	notice, err := n.view.collisionNotice(dest, parts)
+	last := parts[len(parts)-1]
+	rule := n.view.findMarkerRule(dest)
+	if rule != nil {
+		parts = n.view.document(dest, parts)
+	}
+	if len(parts) == 1 {
+		return nil, nil, 0
+	}
+	notice, err := n.view.collisionNotice(dest, slices.DeleteFunc(slices.Clone(parts), func(part contribution) bool { return part.info == nil }))
 	if err != nil {
-		return nil, fs.ToErrno(err)
+		return nil, nil, fs.ToErrno(err)
 	}
 	// A path that shows an explanation has no content a save could replace.
 	if notice != nil {
-		return nil, syscall.EPERM
-	}
-	prefix, err := n.view.contents(dest, parts[:len(parts)-1])
-	if err != nil {
-		return nil, fs.ToErrno(err)
+		return nil, nil, syscall.EPERM
 	}
 	root := n.view.layers[index].root
 	data, err := root.ReadFile(source)
 	if err != nil {
-		return nil, fs.ToErrno(err)
+		return nil, nil, fs.ToErrno(err)
 	}
-	original := data
-	data, err = contributionBytes(data, prefix)
-	if err != nil {
-		return nil, fs.ToErrno(err)
+	original = data
+	if rule != nil {
+		sections, err := parseMarkedDocument(data, parts, n.view.layers, rule)
+		if err != nil {
+			return nil, nil, fs.ToErrno(err)
+		}
+		earlier, data = sections[:len(sections)-1], sections[len(sections)-1].data
+	} else {
+		prefix, err := n.view.contents(dest, parts[:len(parts)-1])
+		if err != nil {
+			return nil, nil, fs.ToErrno(err)
+		}
+		if data, err = contributionBytes(data, prefix); err != nil {
+			return nil, nil, fs.ToErrno(err)
+		}
 	}
-	return original, fs.ToErrno(root.WriteFile(source, data, parts[len(parts)-1].info.Mode().Perm()))
+	return original, earlier, fs.ToErrno(root.WriteFile(source, data, last.info.Mode().Perm()))
 }
 
 func (n *node) Link(ctx context.Context, target fs.InodeEmbedder, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {

@@ -1,6 +1,7 @@
 package overlayfs
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	iofs "io/fs"
@@ -16,6 +17,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitexclude"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/logged"
 )
 
 type layer struct {
@@ -34,7 +36,10 @@ type View struct {
 	nextID       uint64
 	created      map[identity]bool
 	excludeClean atomic.Bool // false until the Git exclusions match the current layers
-	vacatedMu    sync.Mutex
+	openMu       sync.Mutex
+	// open holds the merged files that are open for writing, by path.
+	open      map[string][]*mergedFile
+	vacatedMu sync.Mutex
 	// vacated holds the marked documents whose project copy was removed
 	// through this mount, each with the permissions that copy had.
 	vacated map[string]os.FileMode
@@ -116,6 +121,11 @@ func (v *View) document(name string, parts []contribution) []contribution {
 func (v *View) restore(name string, data []byte) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	return v.restoreLocked(name, data)
+}
+
+// restoreLocked is restore for a caller that holds the view's lock.
+func (v *View) restoreLocked(name string, data []byte) error {
 	v.vacatedMu.Lock()
 	mode, vacated := v.vacated[name]
 	delete(v.vacated, name)
@@ -127,6 +137,43 @@ func (v *View) restore(name string, data []byte) error {
 		return err
 	}
 	return v.changed(0, name)
+}
+
+// saveSections writes each section of the marked document at name to the
+// source it belongs to, leaving a source alone when its text is unchanged.
+// Text in the section of a removed project copy becomes that copy again,
+// through restore.
+func (v *View) saveSections(name string, sections []parsedSection, restore func(name string, data []byte) error) error {
+	for _, sec := range sections {
+		root := v.layers[sec.index].root
+		current, err := root.ReadFile(name)
+		if errors.Is(err, os.ErrNotExist) && sec.index == 0 {
+			if len(sec.data) > 0 {
+				if err := restore(name, sec.data); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(sec.data, current) {
+			continue
+		}
+		file, err := root.OpenFile(name, os.O_WRONLY|os.O_TRUNC, 0)
+		if err != nil {
+			return err
+		}
+		if _, err := file.Write(sec.data); err != nil {
+			logged.Close(file)
+			return err
+		}
+		if err := file.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // remember marks an entry created through this mount in an overlay layer, so

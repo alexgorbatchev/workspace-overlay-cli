@@ -1,7 +1,7 @@
 `workspace-overlay` gives developers and coding agents a writable, layered view of project directories. Keep shared instructions, skills, and project-specific files in separate source directories, then expose them together in each project and its Git worktrees. This is useful when you are working on open source or enterprise projects and can't commit your AI files into the project. It especially useful if your workspace consists of multiple repositories and you want to have workspace and per-project AI files.
 
 > [!WARNING]
-> Saving a merged file from Vim with its default settings loses data: the project's copy of the file is deleted and its text is written into an overlay source. Add `set backupcopy=yes` to your vimrc before editing files in a mounted project. See [How it Really Works](#how-it-really-works) for the details.
+> A program that saves by writing a temporary file and renaming it over the original can damage a merged file that has markers: the marker lines, and any edit made to the project section, are written into an overlay source. Programs that write the file in place, or remove it and write it again, save correctly; Vim and Neovim do so with their default settings.
 
 # What It Does
 
@@ -23,11 +23,13 @@
 # How it Really Works
 
 - The mounted view covers the existing project directory. Ordinary project-file edits persist in that directory; overlay edits persist in their source directories. Unmounting reveals the backing project again.
-- Text files that collide are joined end to end with no separators, so include any needed newline in the source files. Binary files are never joined: when a path has copies in more than one layer and at least one is binary, reading that path returns an explanation that lists every copy and how to resolve the collision, the path rejects writes, and each open logs the collision to stderr. A copy counts as binary when its first 512 bytes do not look like text.
+- Text files that collide are joined in order. For common text formats each overlay's part is wrapped in a start and an end marker line written in the format's own comment syntax, each naming the overlay and the path of its source file, as in `<!-- BEGIN WORKSPACE-OVERLAY: workspace (../.ai/workspace/AGENTS.md) -->` and `<!-- END WORKSPACE-OVERLAY: workspace (../.ai/workspace/AGENTS.md) -->`: Markdown, HTML, XML, and SVG use `<!-- -->`; TOML, YAML, shell, Python, Ruby, `.env`, ignore files, Dockerfiles, and Makefiles use `#`; Go, TypeScript, JavaScript, Rust, C, C++, Java, and CSS use `//`. The project's own text comes first, without markers. Other text files are joined end to end with no separators, so include any needed newline in the source files.
+- Saving a file with markers sends each part to its source: text above the first marker to the project, text between an overlay's markers to that overlay, and text that follows an end marker, such as an appended line, to the overlay it follows. A save in which a marker is missing or out of order is rejected with a permission error. Binary files are never joined: when a path has copies in more than one layer and at least one is binary, reading that path returns an explanation that lists every copy and how to resolve the collision, the path rejects writes, and each open logs the collision to stderr. A copy counts as binary when its first 512 bytes do not look like text.
 - A file that comes from a single layer is served unchanged and behaves like an ordinary file, including shared memory mappings; free-space queries on a mounted project report the project's own filesystem. A joined file is held in memory while open and is limited to 64 MiB: opening a larger one, or writing or truncating one past that size, fails with "file too large".
 - A file that is a directory in one layer and a regular file in another returns an I/O error when accessed; the containing directory remains listable.
-- A full-document save to a merged file must preserve every earlier contribution exactly as its prefix. Only the final contribution is replaced. To edit an earlier contribution, edit its source directly. Append and atomic editor saves are supported; truncating a merged file to zero clears only its final contribution.
-- Vim's default save (`backupcopy=auto`) damages a merged file that has a project copy. Vim tries to rename the file, which is refused, then deletes it, which removes the project copy, and writes the whole document back. In a file with markers, the project's text and the marker lines end up in an overlay source. Set `backupcopy=yes` in your vimrc so Vim writes in place; that save reaches the right sources. Files that exist only in an overlay save correctly with any `backupcopy` value.
+- A full-document save to a merged file without markers must preserve every earlier contribution exactly as its prefix. Only the final contribution is replaced. To edit an earlier contribution, edit its source directly. Append and atomic editor saves are supported; truncating a merged file to zero clears only its final contribution.
+- A merged file reports one hard link for each layer that contributes to it. Programs that keep hard links intact therefore write it in place instead of replacing it; Vim and Neovim do so with their default settings.
+- Removing a merged file removes only the project's copy. In a file with markers the project section is then empty and every overlay section stays marked, until the mount stops or the project has the file again. Text written above the first marker becomes the project's copy again, so a program that removes the file and writes it again saves each section to its own source.
 - A mount cannot be removed while a process is using it, for example a shell or an editor whose working directory is inside the project. Stopping `overlay mount` with Ctrl-C, or running `overlay unmount`, then lists each such process with its PID, command, and working directory. On a terminal it shows them as a table and asks `Stop these processes and unmount? [y/N]`; answering `y` asks them to exit, kills any still running after 3 seconds, and unmounts. Declining, or running with `AGENT=1` or without a terminal, changes nothing: the error names the processes, and a mount whose `overlay mount` has exited stays in place, answering "transport endpoint is not connected", until they exit and `overlay unmount` removes it. The project's own files are never affected.
 - New files go into the backing project when their parent has project backing; otherwise they go into the most-specific overlay directory. A restricted overlay glob must include any new overlay path.
 - Existing overlay files and directories cannot be deleted or moved away through a project mount. Delete or move them in the source directory. Stop the project's overlays before recursively removing one of its worktrees.
@@ -131,6 +133,15 @@ glob = "**/*"
 Each project requires a `path`. Each overlay requires a unique `name`, a `source`, and `projects` glob selectors that match configured project names. Overlay declaration order determines concatenation order after the backing project.
 
 `glob` defaults to `**/*`, includes dotfolders, and selects source paths at any depth. Use relative forward-slash patterns; `.` and `..` components are rejected. For example, `glob = ".agents/skills/**"` selects only skills and their ancestor directories.
+
+Add `[[markers]]` tables to choose the marker lines yourself. Each needs a `glob`, matched against the file's name and its path in the project, and `start` and `end` lines in which `{name}` stands for the overlay and `{path}` for its source file. They take precedence over the built-in markers for the files they match:
+
+```toml
+[[markers]]
+glob = "*.txt"
+start = "=== BEGIN {name} ({path}) ==="
+end = "=== END {name} ==="
+```
 
 Per-overlay `collision` and `write` fields override `[defaults]`. The supported values are `concat` and `most-specific`, respectively. Unknown TOML fields, invalid patterns, overlapping mount targets, and sources inside mount targets are rejected.
 

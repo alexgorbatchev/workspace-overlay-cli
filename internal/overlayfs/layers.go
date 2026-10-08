@@ -34,6 +34,10 @@ type View struct {
 	nextID       uint64
 	created      map[identity]bool
 	excludeClean atomic.Bool // false until the Git exclusions match the current layers
+	vacatedMu    sync.Mutex
+	// vacated holds the marked documents whose project copy was removed
+	// through this mount, each with the permissions that copy had.
+	vacated map[string]os.FileMode
 }
 
 type identity struct {
@@ -71,7 +75,58 @@ func (v *View) stable(name string) (fs.StableAttr, error) {
 
 type contribution struct {
 	index int
-	info  os.FileInfo
+	// info describes the layer's file. It is nil for the project section of
+	// a document whose project copy was removed through this mount.
+	info os.FileInfo
+}
+
+// vacate remembers that the project copy of the marked document at name was
+// removed through this mount.
+func (v *View) vacate(name string, mode os.FileMode) {
+	v.vacatedMu.Lock()
+	defer v.vacatedMu.Unlock()
+	if v.vacated == nil {
+		v.vacated = make(map[string]os.FileMode)
+	}
+	v.vacated[name] = mode
+}
+
+// document returns the sections that the marked file at name is laid out
+// with, given the layers that contribute to it. A document keeps its project
+// section, now empty, after its project copy was removed through this mount:
+// a program that removes a file and then writes it again, as Vim does when it
+// saves, writes the same document it read, and the text it puts in that
+// section becomes the project copy again.
+func (v *View) document(name string, parts []contribution) []contribution {
+	v.vacatedMu.Lock()
+	defer v.vacatedMu.Unlock()
+	if _, vacated := v.vacated[name]; !vacated {
+		return parts
+	}
+	if parts[0].index == 0 {
+		// The project copy is back.
+		delete(v.vacated, name)
+		return parts
+	}
+	return append([]contribution{{index: 0}}, parts...)
+}
+
+// restore writes data as the project copy of the marked document at name,
+// whose project copy was removed.
+func (v *View) restore(name string, data []byte) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.vacatedMu.Lock()
+	mode, vacated := v.vacated[name]
+	delete(v.vacated, name)
+	v.vacatedMu.Unlock()
+	if !vacated {
+		mode = 0644
+	}
+	if err := v.layers[0].root.WriteFile(name, data, mode); err != nil {
+		return err
+	}
+	return v.changed(0, name)
 }
 
 // remember marks an entry created through this mount in an overlay layer, so

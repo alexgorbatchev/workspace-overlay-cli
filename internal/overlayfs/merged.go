@@ -3,9 +3,11 @@ package overlayfs
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"syscall"
 
@@ -21,7 +23,9 @@ const maxMergedSize = 64 << 20
 func mergedSize(parts []contribution) int64 {
 	var size int64
 	for _, part := range parts {
-		size += part.info.Size()
+		if part.info != nil {
+			size += part.info.Size()
+		}
 	}
 	return size
 }
@@ -42,11 +46,14 @@ type mergedFile struct {
 
 func (n *node) renderMarkedData(parts []contribution, rule *MarkerRule) ([]byte, error) {
 	var buf bytes.Buffer
-	baseBytes, err := n.view.layers[parts[0].index].root.ReadFile(n.relativePath())
-	if err != nil {
-		return nil, err
+	// A project section whose copy was removed is empty.
+	if parts[0].info != nil {
+		baseBytes, err := n.view.layers[parts[0].index].root.ReadFile(n.relativePath())
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(baseBytes)
 	}
-	buf.Write(baseBytes)
 
 	for i := 1; i < len(parts); i++ {
 		l := n.view.layers[parts[i].index]
@@ -85,7 +92,7 @@ func (n *node) renderMarkedData(parts []contribution, rule *MarkerRule) ([]byte,
 
 func (n *node) openMerged(ctx context.Context, flags uint32, parts []contribution) (fs.FileHandle, uint32, syscall.Errno) {
 	last := parts[len(parts)-1]
-	notice, err := n.view.collisionNotice(n.relativePath(), parts)
+	notice, err := n.view.collisionNotice(n.relativePath(), slices.DeleteFunc(slices.Clone(parts), func(part contribution) bool { return part.info == nil }))
 	if err != nil {
 		log.Printf("render %s: %v", n.relativePath(), err)
 		return nil, 0, syscall.EIO
@@ -199,6 +206,7 @@ func (f *mergedFile) Getattr(ctx context.Context, out *fuse.AttrOut) syscall.Err
 	defer f.mu.Unlock()
 	out.Attr = f.attr
 	out.Size = uint64(len(f.data))
+	out.Nlink = uint32(len(f.parts))
 	return 0
 }
 
@@ -221,6 +229,15 @@ func (f *mergedFile) commit() syscall.Errno {
 		for _, sec := range sections {
 			layer := f.node.view.layers[sec.index]
 			origBytes, err := layer.root.ReadFile(f.node.relativePath())
+			if errors.Is(err, os.ErrNotExist) && sec.index == 0 {
+				// The project copy was removed; text in its section brings it back.
+				if len(sec.data) > 0 {
+					if err := f.node.view.restore(f.node.relativePath(), sec.data); err != nil {
+						return fs.ToErrno(err)
+					}
+				}
+				continue
+			}
 			if err != nil {
 				return fs.ToErrno(err)
 			}
@@ -338,5 +355,6 @@ func (f *mergedFile) Setattr(ctx context.Context, in *fuse.SetAttrIn, out *fuse.
 	f.attr = attr.Attr
 	out.Attr = f.attr
 	out.Size = uint64(len(f.data))
+	out.Nlink = uint32(len(f.parts))
 	return 0
 }

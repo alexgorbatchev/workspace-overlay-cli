@@ -106,9 +106,20 @@ func (n *node) Getattr(ctx context.Context, handle fs.FileHandle, out *fuse.Attr
 	}
 	info := parts[len(parts)-1].info
 	attributes(info, out)
-	if info.Mode().IsRegular() && len(parts) > 1 {
+	if !info.Mode().IsRegular() {
+		return 0
+	}
+	rule := n.view.findMarkerRule(n.relativePath())
+	if rule != nil {
+		parts = n.view.document(n.relativePath(), parts)
+	}
+	if len(parts) > 1 {
+		// A merged file stands for one file in each layer. Reporting them as
+		// links tells programs that replacing the file would cut it off from
+		// the others, so editors such as Vim write it in place instead.
+		out.Nlink = uint32(len(parts))
 		out.Size = uint64(mergedSize(parts))
-		if rule := n.view.findMarkerRule(n.relativePath()); rule != nil {
+		if rule != nil {
 			if data, err := n.renderMarkedData(parts, rule); err == nil {
 				out.Size = uint64(len(data))
 			}
@@ -136,6 +147,9 @@ func (n *node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 	// A file contributed by one layer needs no merging. Serve it natively and
 	// through the kernel page cache, so descriptor semantics, including shared
 	// memory mappings, match the backing filesystem.
+	if !isGitCaller(ctx) && n.view.findMarkerRule(n.relativePath()) != nil {
+		parts = n.view.document(n.relativePath(), parts)
+	}
 	if len(parts) == 1 || isGitCaller(ctx) {
 		index := last.index
 		if isGitCaller(ctx) {

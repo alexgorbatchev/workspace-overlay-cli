@@ -156,7 +156,7 @@ func TestE2ELocalWorkspace(t *testing.T) {
 	if !strings.Contains(content, expectedMarker) {
 		t.Errorf("missing marker %q in %q", expectedMarker, content)
 	}
-	if !strings.Contains(content, "<!-- END WORKSPACE-OVERLAY: workspace -->") {
+	if !strings.Contains(content, "<!-- END WORKSPACE-OVERLAY: workspace (../.ai/workspace/AGENTS.md) -->") {
 		t.Errorf("missing workspace end marker in %q", content)
 	}
 	if !strings.Contains(content, "<!-- BEGIN WORKSPACE-OVERLAY: alpha (../.ai/alpha/AGENTS.md) -->") {

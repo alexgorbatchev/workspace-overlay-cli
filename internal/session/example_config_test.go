@@ -16,6 +16,24 @@ import (
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
+// markedDocument returns what a mounted project shows for name: the project's
+// own text, then each overlay's text between the built-in Markdown markers.
+func markedDocument(t *testing.T, selection Selection, project []byte, name string) []byte {
+	t.Helper()
+	want := bytes.Clone(project)
+	for _, source := range selection.Sources {
+		path, err := filepath.Rel(selection.Target, filepath.Join(source.Path, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, "<!-- BEGIN WORKSPACE-OVERLAY: "+source.Name+" ("+path+") -->\n"...)
+		want = append(want, scratch.Read(t, filepath.Join(source.Path, name))...)
+		want = append(want, "<!-- END WORKSPACE-OVERLAY: "+source.Name+" ("+path+") -->\n"...)
+	}
+	return want
+}
+
+// The shipped configuration names no marker rules, so the built-in ones apply.
 func TestExampleConfigurationMountsAndWrites(t *testing.T) {
 	const shutdownTimeout = 5 * time.Second
 	template := scratch.Read(t, filepath.Join("..", "..", "workspace-overlay.example.toml"))
@@ -57,10 +75,7 @@ func TestExampleConfigurationMountsAndWrites(t *testing.T) {
 	})
 	for _, selection := range mounts {
 		waitMount(t, selection.Target, overlayfs.FilesystemType)
-		want := scratch.Read(t, filepath.Join("..", "fixture", "testdata", "workspace", selection.Project, "AGENTS.md"))
-		for _, source := range selection.Sources {
-			want = append(want, scratch.Read(t, filepath.Join(source.Path, "AGENTS.md"))...)
-		}
+		want := markedDocument(t, selection, scratch.Read(t, filepath.Join("..", "fixture", "testdata", "workspace", selection.Project, "AGENTS.md")), "AGENTS.md")
 		if got := scratch.Read(t, filepath.Join(selection.Target, "AGENTS.md")); !bytes.Equal(got, want) {
 			t.Fatalf("configured overlay %s: got %q, want %q", selection.Project, got, want)
 		}
@@ -69,10 +84,8 @@ func TestExampleConfigurationMountsAndWrites(t *testing.T) {
 	for _, selection := range mounts {
 		waitMount(t, filepath.Join(root, ".workspaces", "one", selection.Project), overlayfs.FilesystemType)
 		scratch.Read(t, filepath.Join(selection.Target, ".agents", "skills", "workspace-check", "SKILL.md"))
-		want := scratch.Read(t, filepath.Join("..", "fixture", "testdata", "workspace", selection.Project, "docs", "nested", "notes.md"))
-		for _, source := range selection.Sources {
-			want = append(want, scratch.Read(t, filepath.Join(source.Path, "docs", "nested", "notes.md"))...)
-		}
+		nested := filepath.Join("docs", "nested", "notes.md")
+		want := markedDocument(t, selection, scratch.Read(t, filepath.Join("..", "fixture", "testdata", "workspace", selection.Project, nested)), nested)
 		if got := scratch.Read(t, filepath.Join(selection.Target, "docs", "nested", "notes.md")); !bytes.Equal(got, want) {
 			t.Fatalf("nested merge: %q, want %q", got, want)
 		}
@@ -84,8 +97,13 @@ func TestExampleConfigurationMountsAndWrites(t *testing.T) {
 		t.Fatalf("tracked collision lost: %s (%v)", out, err)
 	}
 	document := scratch.Read(t, filepath.Join(first.Target, "AGENTS.md"))
-	if got := scratch.Read(t, filepath.Join(worktree, "AGENTS.md")); !bytes.Equal(got, document) {
-		t.Fatalf("worktree overlay: got %q, want %q", got, document)
+	// A worktree shows the same document; its markers name the sources by
+	// their path from the worktree.
+	checkout := first
+	checkout.Target = worktree
+	projectText := scratch.Read(t, filepath.Join("..", "fixture", "testdata", "workspace", first.Project, "AGENTS.md"))
+	if got, want := scratch.Read(t, filepath.Join(worktree, "AGENTS.md")), markedDocument(t, checkout, projectText, "AGENTS.md"); !bytes.Equal(got, want) {
+		t.Fatalf("worktree overlay: got %q, want %q", got, want)
 	}
 	finalSource := filepath.Join(first.Sources[len(first.Sources)-1].Path, "AGENTS.md")
 	originalContribution := scratch.Read(t, finalSource)
@@ -97,7 +115,9 @@ func TestExampleConfigurationMountsAndWrites(t *testing.T) {
 	if got := scratch.Read(t, finalSource); !bytes.Equal(got, append(originalContribution, addition...)) {
 		t.Fatalf("most-specific contribution: %q", got)
 	}
-	if got := scratch.Read(t, filepath.Join(worktree, "AGENTS.md")); !bytes.Equal(got, updated) {
-		t.Fatalf("worktree after save: got %q, want %q", got, updated)
+	// The appended line now lies inside the section of the source that took it.
+	saved := markedDocument(t, checkout, projectText, "AGENTS.md")
+	if got := scratch.Read(t, filepath.Join(worktree, "AGENTS.md")); !bytes.Equal(got, saved) {
+		t.Fatalf("worktree after save: got %q, want %q", got, saved)
 	}
 }

@@ -3,6 +3,7 @@ package overlayfs
 import (
 	"bytes"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -20,26 +21,38 @@ var defaultMarkerRules = []MarkerRule{
 	{
 		Glob:  "*.{md,markdown}",
 		Start: "<!-- BEGIN WORKSPACE-OVERLAY: {name} ({path}) -->",
-		End:   "<!-- END WORKSPACE-OVERLAY: {name} -->",
+		End:   "<!-- END WORKSPACE-OVERLAY: {name} ({path}) -->",
 	},
 	{
 		Glob:  "*.{html,htm,xml,svg}",
 		Start: "<!-- BEGIN WORKSPACE-OVERLAY: {name} ({path}) -->",
-		End:   "<!-- END WORKSPACE-OVERLAY: {name} -->",
+		End:   "<!-- END WORKSPACE-OVERLAY: {name} ({path}) -->",
 	},
 	{
-		Glob:  "*.{toml,yaml,yml,sh,bash,zsh,py,rb,env,env.*,*ignore,Dockerfile*,Makefile*}",
+		Glob:  "*.{toml,yaml,yml,sh,bash,zsh,py,rb,env,env.*,*ignore}",
 		Start: "# BEGIN WORKSPACE-OVERLAY: {name} ({path})",
-		End:   "# END WORKSPACE-OVERLAY: {name}",
+		End:   "# END WORKSPACE-OVERLAY: {name} ({path})",
+	},
+	{
+		Glob:  "{Dockerfile,Makefile}*",
+		Start: "# BEGIN WORKSPACE-OVERLAY: {name} ({path})",
+		End:   "# END WORKSPACE-OVERLAY: {name} ({path})",
 	},
 	{
 		Glob:  "*.{go,ts,js,tsx,jsx,rs,c,cpp,h,hpp,java,css,scss,less}",
 		Start: "// BEGIN WORKSPACE-OVERLAY: {name} ({path})",
-		End:   "// END WORKSPACE-OVERLAY: {name}",
+		End:   "// END WORKSPACE-OVERLAY: {name} ({path})",
 	},
 }
 
-// SetMarkers attaches custom marker rules to the view.
+// DefaultMarkerRules returns the built-in marker rules for common text
+// formats, each using the format's own comment syntax.
+func DefaultMarkerRules() []MarkerRule {
+	return slices.Clone(defaultMarkerRules)
+}
+
+// SetMarkers attaches the marker rules of the view. The first rule that
+// matches a file applies to it.
 func (v *View) SetMarkers(rules []MarkerRule) {
 	v.markers = rules
 }
@@ -81,6 +94,7 @@ type parsedSection struct {
 }
 
 // parseMarkedDocument splits data into section 0 (base) and sections for each overlay part.
+// Text before the first marker is section 0; text after a section's end marker belongs to that section.
 // Returns syscall.EPERM if markers are missing, corrupted, or out of order.
 func parseMarkedDocument(data []byte, parts []contribution, layers []layer, rule *MarkerRule) ([]parsedSection, error) {
 	if len(parts) <= 1 {
@@ -143,8 +157,15 @@ func parseMarkedDocument(data []byte, parts []contribution, layers []layer, rule
 	result[0] = parsedSection{index: parts[0].index, data: bytes.Clone(sec0)}
 
 	for i := 1; i < len(parts); i++ {
-		secData := data[spans[i-1].contentStart:spans[i-1].contentEnd]
-		result[i] = parsedSection{index: parts[i].index, data: bytes.Clone(secData)}
+		secData := bytes.Clone(data[spans[i-1].contentStart:spans[i-1].contentEnd])
+		// Text after a section's end marker, such as a line appended to the
+		// document, has no markers of its own. It joins the section it follows.
+		following := len(data)
+		if i < len(spans) {
+			following = spans[i].startPos
+		}
+		secData = append(secData, data[spans[i-1].endEnd:following]...)
+		result[i] = parsedSection{index: parts[i].index, data: secData}
 	}
 
 	return result, nil

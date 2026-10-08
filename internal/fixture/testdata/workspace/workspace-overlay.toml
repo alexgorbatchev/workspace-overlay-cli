@@ -7,7 +7,7 @@ write = "most-specific"
 [[markers]]
 glob = "*.md"
 start = "<!-- BEGIN WORKSPACE-OVERLAY: {name} ({path}) -->"
-end   = "<!-- END WORKSPACE-OVERLAY: {name} -->"
+end   = "<!-- END WORKSPACE-OVERLAY: {name} ({path}) -->"
 
 [projects.alpha]
 path = "alpha"

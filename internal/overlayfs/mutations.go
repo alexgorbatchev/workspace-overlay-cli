@@ -112,6 +112,9 @@ func (n *node) Unlink(ctx context.Context, name string) syscall.Errno {
 		if err := n.view.layers[0].root.Remove(child); err != nil {
 			return fs.ToErrno(err)
 		}
+		if n.view.findMarkerRule(child) != nil {
+			n.view.vacate(child, parts[0].info.Mode().Perm())
+		}
 		return fs.ToErrno(n.view.changed(0, child))
 	}
 	last := parts[len(parts)-1]

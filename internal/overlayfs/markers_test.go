@@ -89,7 +89,7 @@ func TestMarkedMergedFileRenderAndRead(t *testing.T) {
 	}
 
 	// Verify end marker
-	expectedEnd := "<!-- END WORKSPACE-OVERLAY: workspace -->"
+	expectedEnd := "<!-- END WORKSPACE-OVERLAY: workspace (../.ai/workspace/AGENTS.md) -->"
 	if !strings.Contains(content, expectedEnd) {
 		t.Errorf("content missing end marker %q: %q", expectedEnd, content)
 	}

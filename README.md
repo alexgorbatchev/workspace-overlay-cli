@@ -37,17 +37,22 @@
 - Set `AGENT=1`, `true`, or `yes` for compact help. `workspace-overlay skill` prints the embedded operating guide in either mode and works offline.
 - `fixture create` creates or reuses an isolated verification workspace with two Git projects, Alpha and Beta, and one linked worktree each. Their shared and project overlays include instructions, skills, and nested colliding files. Repeated creation retains edits and worktree changes. Existing foreign or incomplete directories are refused; failed initialization retains its partial files.
 
-# Prerequisites
+# Installation
+
+Download the prebuilt Linux binary for your architecture from the [latest release](https://github.com/alexgorbatchev/workspace-overlay-cli/releases/latest).
+
+```sh
+# Linux (x86-64)
+curl -sSL https://github.com/alexgorbatchev/workspace-overlay-cli/releases/download/v0.0.1/workspace-overlay_0.0.1_linux_amd64.tar.gz | tar -xz -C ~/.local/bin workspace-overlay
+```
+
+# Setup
 
 - Linux with accessible [`/dev/fuse`](https://docs.kernel.org/filesystems/fuse/fuse.html) for mounting the project view.
 - [`fusermount3`](https://github.com/libfuse/libfuse) on `PATH` for mounting and unmounting. The CLI invokes it for you.
 - [`findmnt`](https://man7.org/linux/man-pages/man8/findmnt.8.html) on `PATH` for mount inspection.
 - [`git`](https://git-scm.com/docs/git-worktree) on `PATH` for versioned projects, worktree discovery, and repository exclusions. Unversioned projects mount without Git metadata.
 - Existing, readable project and source directories; writable sources for overlay edits.
-
-# Installation
-
-This checkout has no configured release download. Local build and run instructions are in [AGENTS.md](AGENTS.md).
 
 # Quick Start
 

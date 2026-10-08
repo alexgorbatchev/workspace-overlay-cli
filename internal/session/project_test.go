@@ -69,7 +69,8 @@ func TestProjectWatcherOverflow(t *testing.T) {
 	go func() { p.notify.watcher.Errors <- fsnotify.ErrEventOverflow }()
 	p.selection.Worktrees = true
 	scratch.Write(t, filepath.Join(p.selection.Target, ".git"), "invalid")
-	if err := p.loop(context.Background()); err == nil || !strings.Contains(err.Error(), "discover worktrees") {
+	// A listing that keeps failing is reported, with what Git said about it.
+	if err := p.loop(context.Background()); err == nil || !strings.Contains(err.Error(), "discover worktrees") || !strings.Contains(err.Error(), "fatal: ") {
 		t.Fatalf("overflow rescan: %v", err)
 	}
 }

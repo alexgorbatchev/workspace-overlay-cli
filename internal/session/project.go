@@ -21,6 +21,14 @@ import (
 const debounceDelay = 200 * time.Millisecond
 const reconcileInterval = 30 * time.Second
 
+// Git writes a new worktree's files one after another, and refuses to list
+// worktrees while one of them is half written. Such a failure is gone moments
+// later, so a failed listing is taken up to listingAttempts times, waiting
+// listingRetryDelay after the first failure and twice as long after each
+// further one, before it counts.
+const listingAttempts = 4
+const listingRetryDelay = 100 * time.Millisecond
+
 type runningMount struct {
 	plan   mountPlan
 	cancel context.CancelFunc
@@ -325,6 +333,25 @@ func (p *projectRunner) loop(ctx context.Context) error {
 	timer := time.NewTimer(debounceDelay)
 	defer timer.Stop()
 	var changed <-chan time.Time
+	// reconcile brings the mounts in line with Git. A failed listing is not
+	// waited out here, where a stop request would have to wait with it: the
+	// timer brings the next attempt, and the loop keeps answering meanwhile.
+	failures := 0
+	reconcile := func() error {
+		err := p.reconcile(ctx)
+		if !errors.Is(err, errListing) || ctx.Err() != nil {
+			failures = 0
+			return err
+		}
+		failures++
+		if failures == listingAttempts {
+			return err
+		}
+		log.Printf("%v; listing again", err)
+		timer.Reset(listingRetryDelay << (failures - 1))
+		changed = timer.C
+		return nil
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -365,19 +392,19 @@ func (p *projectRunner) loop(ctx context.Context) error {
 				return fmt.Errorf("filesystem watcher error channel closed")
 			}
 			log.Printf("filesystem notifications: %v; reconciling state", err)
-			if err := p.reconcile(ctx); err != nil {
+			if err := reconcile(); err != nil {
 				return err
 			}
 		case <-changed:
 			changed = nil
-			if err := p.reconcile(ctx); err != nil {
+			if err := reconcile(); err != nil {
 				return err
 			}
 		case <-ticker.C:
 			if _, err := os.Stat(p.records.StopFile()); err == nil {
 				return nil
 			}
-			if err := p.reconcile(ctx); err != nil {
+			if err := reconcile(); err != nil {
 				return err
 			}
 		}

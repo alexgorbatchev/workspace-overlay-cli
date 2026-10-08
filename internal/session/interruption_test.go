@@ -56,6 +56,85 @@ func (s stalled) wait(t *testing.T) {
 	t.Fatal("the stalled command never ran")
 }
 
+// failing makes program exit with status 128, as Git does on a fatal error,
+// the next times it runs with arguments that contain match.
+func failing(t *testing.T, program, match string, times int) {
+	t.Helper()
+	original, err := exec.LookPath(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	left := scratch.Write(t, filepath.Join(dir, "left"), strings.Repeat("x", times))
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in *%q*) if [ -s %q ]; then left=$(cat %q); printf %%s \"${left#x}\" > %q; echo \"fatal: failed to read worktrees/half-written/commondir\" >&2; exit 128; fi ;; esac\nexec %q \"$@\"\n", match, left, left, left, original)
+	if err := os.WriteFile(filepath.Join(dir, program), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// Git writes a new worktree's files one after another and refuses to list
+// worktrees while one of them is half written. A listing that fails for that
+// reason succeeds moments later, so it must not stop the project.
+func TestFailedWorktreeListingIsTakenAgain(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	scratch.GitRepo(t, project)
+	selection := Selection{Root: root, Project: "project", Target: project, Worktrees: true,
+		Sources: []config.Source{{Name: "shared", Path: scratch.Mkdir(t, filepath.Join(root, ".ai", "shared")), Glob: "**/*"}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan error, 1)
+	go func() { finished <- mountProjects(ctx, selection) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-finished:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("session did not stop")
+		}
+	})
+	waitMount(t, project, overlayfs.FilesystemType)
+
+	failing(t, "git", "worktree list", 2)
+	worktree := filepath.Join(root, ".workspaces", "late")
+	addWorktree(t, project, "late", worktree)
+
+	waitMount(t, worktree, overlayfs.FilesystemType)
+	waitMount(t, project, overlayfs.FilesystemType)
+}
+
+// The same passing failure can meet the listing a mount starts with.
+func TestFailedWorktreeListingAtStartupIsTakenAgain(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	scratch.GitRepo(t, project)
+	worktree := filepath.Join(root, ".workspaces", "early")
+	addWorktree(t, project, "early", worktree)
+	selection := Selection{Root: root, Project: "project", Target: project, Worktrees: true,
+		Sources: []config.Source{{Name: "shared", Path: scratch.Mkdir(t, filepath.Join(root, ".ai", "shared")), Glob: "**/*"}}}
+	failing(t, "git", "worktree list", 2)
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan error, 1)
+	go func() { finished <- mountProjects(ctx, selection) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-finished:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("session did not stop")
+		}
+	})
+
+	waitMount(t, project, overlayfs.FilesystemType)
+	waitMount(t, worktree, overlayfs.FilesystemType)
+}
+
 // A project that cannot be mounted reports its own refusal. The other
 // projects are told to stop, and their interrupted checks are not failures.
 func TestRefusedProjectReportsOnlyItsOwnError(t *testing.T) {

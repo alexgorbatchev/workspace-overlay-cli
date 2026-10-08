@@ -7,9 +7,11 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/config"
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/gitrepo"
@@ -70,8 +72,26 @@ func discoverWorktrees(ctx context.Context, target string, worktrees bool) ([]st
 	} else if err != nil {
 		return nil, err
 	}
-	return listWorktrees(ctx, target)
+	// Nothing else needs this process meanwhile, so a listing that fails
+	// while Git is writing a worktree is waited out here.
+	delay := listingRetryDelay
+	for attempt := 1; ; attempt++ {
+		targets, err := listWorktrees(ctx, target)
+		if !errors.Is(err, errListing) || attempt == listingAttempts || ctx.Err() != nil {
+			return targets, err
+		}
+		log.Printf("%v; listing again", err)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+		delay *= 2
+	}
 }
+
+// errListing marks a worktree listing that Git refused.
+var errListing = errors.New("discover worktrees")
 
 // listWorktrees asks Git for target and the worktrees linked to it.
 func listWorktrees(ctx context.Context, target string) ([]string, error) {
@@ -79,7 +99,11 @@ func listWorktrees(ctx context.Context, target string) ([]string, error) {
 	cmd := gitrepo.Command(ctx, target, "worktree", "list", "--porcelain", "-z")
 	data, err := subprocess.Output(ctx, cmd)
 	if err != nil {
-		return nil, fmt.Errorf("discover worktrees: %w", err)
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && len(exit.Stderr) > 0 {
+			return nil, fmt.Errorf("%w: %w: %s", errListing, err, strings.TrimSpace(string(exit.Stderr)))
+		}
+		return nil, fmt.Errorf("%w: %w", errListing, err)
 	}
 	seen := map[string]bool{pathname.Canonical(target): true}
 	for _, record := range strings.Split(string(data), "\x00\x00") {

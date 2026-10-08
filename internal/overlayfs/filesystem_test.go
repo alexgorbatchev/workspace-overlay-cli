@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -36,7 +37,7 @@ func TestNodeLookup(t *testing.T) {
 	if errno != 0 || inode == nil {
 		t.Fatalf("Lookup base.txt errno = %v", errno)
 	}
-	if entryOut.Attr.Mode&syscall.S_IFREG == 0 {
+	if entryOut.Mode&syscall.S_IFREG == 0 {
 		t.Errorf("expected regular file mode in entryOut")
 	}
 
@@ -275,7 +276,8 @@ func TestNodeErrors(t *testing.T) {
 			t.Errorf("Getattr with broken exclude got errno %v, want EIO", errno)
 		}
 
-		// Cleanup
-		ge.Close()
+		if err := ge.Close(); err == nil || !strings.Contains(err.Error(), "managed Git exclude block changed") {
+			t.Errorf("closing the broken exclude = %v, want it to report the change", err)
+		}
 	})
 }

@@ -132,7 +132,7 @@ func TestResolve(t *testing.T) {
 	}
 
 	// Non-existent file
-	parts, err = v.resolve("missing.txt")
+	_, err = v.resolve("missing.txt")
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("resolve missing.txt expected ErrNotExist, got %v", err)
 	}
@@ -252,7 +252,7 @@ func TestDestination(t *testing.T) {
 	}
 
 	// Parent path is not a directory
-	dest, err = v.destination("file0.txt/invalid_child.txt")
+	_, err = v.destination("file0.txt/invalid_child.txt")
 	if !errors.Is(err, syscall.ENOTDIR) {
 		t.Errorf("expected ENOTDIR when parent is file, got %v", err)
 	}

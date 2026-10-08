@@ -29,8 +29,7 @@ func TestRegistryPreservesUnfinishedCleanup(t *testing.T) {
 		t.Fatalf("unfinished mount record lost: %+v, %v", state, err)
 	}
 	if next, err := registry.Open(root, "project"); err == nil {
-		next.Close()
-		t.Fatal("stale registry overwritten without explicit recovery")
+		t.Fatalf("stale registry overwritten without explicit recovery (closing it: %v)", next.Close())
 	}
 	if err := recoverRegistry(context.Background(), root, "project"); err != nil {
 		t.Fatal(err)
@@ -129,7 +128,11 @@ func TestRecoveryRefusesLiveOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	t.Cleanup(func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	if err := recoverRegistry(context.Background(), root, "project"); err == nil {
 		t.Fatal("recovery took over live owner")
 	}

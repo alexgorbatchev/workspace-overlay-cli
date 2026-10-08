@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -39,6 +40,29 @@ func TestUsageWriteFailureIsReported(t *testing.T) {
 	err := run([]string{"overlay", "status", "--no-such-flag"}, &stdout, &failingWriter{})
 	if err == nil || !strings.Contains(err.Error(), "no-such-flag") || !strings.Contains(err.Error(), "write failed") {
 		t.Fatalf("flag error and failed usage write: %v", err)
+	}
+}
+
+// firstWriteFails rejects the first write, which for agent help is the alert
+// line, and accepts everything after it.
+type firstWriteFails struct{ failed bool }
+
+func (w *firstWriteFails) Write(p []byte) (int, error) {
+	if !w.failed {
+		w.failed = true
+		return 0, errors.New("alert could not be written")
+	}
+	return len(p), nil
+}
+
+func TestAgentAlertWriteFailureIsReported(t *testing.T) {
+	t.Setenv("AGENT", "1")
+	var stderr bytes.Buffer
+	if err := run([]string{"--help"}, &firstWriteFails{}, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "alert could not be written") {
+		t.Fatalf("failed write of the agent alert was not reported: %q", stderr.String())
 	}
 }
 

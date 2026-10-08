@@ -54,13 +54,13 @@ func TestExcludePattern(t *testing.T) {
 			name:      "contains newline",
 			input:     "bad\npath",
 			wantErr:   true,
-			errSubstr: "Git exclude cannot represent path",
+			errSubstr: "cannot be written as a Git exclude pattern",
 		},
 		{
 			name:      "contains carriage return",
 			input:     "bad\rpath",
 			wantErr:   true,
-			errSubstr: "Git exclude cannot represent path",
+			errSubstr: "cannot be written as a Git exclude pattern",
 		},
 	}
 
@@ -107,8 +107,7 @@ func TestExcludeNativeHandleFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	if clone, err := g.Clone(); err == nil {
-		clone.Close()
-		t.Fatal("closed exclude handle cloned")
+		t.Fatalf("closed exclude handle cloned (closing the clone: %v)", clone.Close())
 	}
 	if err := g.Update([]string{"/ignored"}); err == nil {
 		t.Fatal("closed exclude handle updated")
@@ -235,7 +234,14 @@ func TestRestoreRemovesRecordedBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	// Both handles in this test lose their block to someone else, which Close
+	// must report instead of rewriting the file.
+	closeReportsChange := func(f *File) {
+		if err := f.Close(); err == nil || !strings.Contains(err.Error(), "managed Git exclude block changed") {
+			t.Errorf("closing a handle whose block was changed = %v, want it to report the change", err)
+		}
+	}
+	defer closeReportsChange(f)
 	var recordedBlock []byte
 	f.OnUpdate = func(block []byte) error {
 		recordedBlock = append([]byte(nil), block...)
@@ -260,7 +266,7 @@ func TestRestoreRemovesRecordedBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f2.Close()
+	defer closeReportsChange(f2)
 	f2.OnUpdate = func(block []byte) error {
 		recordedBlock = append([]byte(nil), block...)
 		return nil

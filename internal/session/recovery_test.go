@@ -331,7 +331,6 @@ func TestStopRequestRemovedOnceOwnerIsGone(t *testing.T) {
 		case <-ticker.C:
 			if _, err := os.Stat(r.StopFile()); err == nil {
 				stopExists = true
-				break
 			}
 		case <-deadline.C:
 			t.Fatal("stop file was not created")

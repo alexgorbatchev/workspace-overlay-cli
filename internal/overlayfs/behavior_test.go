@@ -158,6 +158,7 @@ func TestMergedFileFlushPrefixViolation(t *testing.T) {
 	}
 	defer func() {
 		if errno := handle.(fs.FileReleaser).Release(ctx); errno != 0 && errno != syscall.EPERM {
+			t.Errorf("Release errno = %v", errno)
 		}
 	}()
 
@@ -490,7 +491,7 @@ func TestCreateFileAttributes(t *testing.T) {
 			t.Errorf("Release errno = %v", relErr)
 		}
 	}
-	if entryOut.Attr.Mode == 0 {
+	if entryOut.Mode == 0 {
 		t.Errorf("Create returned zero mode in EntryOut")
 	}
 }
@@ -506,7 +507,7 @@ func TestMkdirAttributes(t *testing.T) {
 	if inode == nil {
 		t.Errorf("Mkdir returned nil inode")
 	}
-	if !entryOut.Attr.IsDir() {
+	if !entryOut.IsDir() {
 		t.Errorf("Mkdir returned non-directory mode in EntryOut")
 	}
 }
@@ -600,7 +601,7 @@ func TestGetattrDirectory(t *testing.T) {
 	if errno != 0 {
 		t.Errorf("Getattr on dir errno = %v", errno)
 	}
-	if !out.Attr.IsDir() {
+	if !out.IsDir() {
 		t.Errorf("Getattr returned non-directory mode")
 	}
 }

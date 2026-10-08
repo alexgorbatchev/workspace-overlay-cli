@@ -129,7 +129,7 @@ func (f *File) Close() error {
 // Pattern converts a path into a Git exclude pattern, escaping special characters.
 func Pattern(name string) (string, error) {
 	if strings.ContainsAny(name, "\r\n") {
-		return "", fmt.Errorf("Git exclude cannot represent path %q", name)
+		return "", fmt.Errorf("path %q cannot be written as a Git exclude pattern", name)
 	}
 	var pattern strings.Builder
 	pattern.WriteByte('/')
@@ -148,7 +148,7 @@ func Restore(filePath string, block []byte) error {
 	if err != nil {
 		return err
 	}
-	defer root.Close()
+	// Close removes the block and closes root.
 	f := &File{root: root, path: filePath, block: block}
 	return f.Close()
 }

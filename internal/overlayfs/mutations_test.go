@@ -567,8 +567,12 @@ func TestNodeMutationsErrors(t *testing.T) {
 	})
 
 	t.Run("prepareSave_nonexistent_source", func(t *testing.T) {
-		if _, errno := root.prepareSave(0, "nonexistent_source", "dest_is_dir"); errno == 0 {
-			// dest_is_dir is handled, test with a merged dest
+		// The staged file is only read when the destination is a merged file.
+		for _, layer := range root.view.layers[:2] {
+			scratch.Write(t, filepath.Join(layer.root.Name(), "merged_save.txt"), "content\n")
+		}
+		if _, errno := root.prepareSave(0, "nonexistent_source", "merged_save.txt"); errno != syscall.ENOENT {
+			t.Errorf("prepareSave with a missing staged file = %v, want ENOENT", errno)
 		}
 	})
 }

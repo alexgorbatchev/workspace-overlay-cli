@@ -30,7 +30,7 @@ func TestRegistryLivesInStateHome(t *testing.T) {
 	}
 
 	prefix := filepath.Join(state, "workspace-overlay") + string(filepath.Separator)
-	if !filepath.HasPrefix(r.File(), prefix) {
+	if !strings.HasPrefix(r.File(), prefix) {
 		t.Fatalf("r.File() %q does not have prefix %q", r.File(), prefix)
 	}
 
@@ -71,7 +71,7 @@ func TestStateHomeDefaultsToHomeDirectory(t *testing.T) {
 			}
 
 			prefix := filepath.Join(home, ".local", "state", "workspace-overlay") + string(filepath.Separator)
-			if !filepath.HasPrefix(r.File(), prefix) {
+			if !strings.HasPrefix(r.File(), prefix) {
 				t.Fatalf("r.File() %q does not have prefix %q", r.File(), prefix)
 			}
 
@@ -191,8 +191,7 @@ func TestRegistryLockAndUpdates(t *testing.T) {
 		t.Fatal(err)
 	}
 	if other, err := Open(root, "project"); err == nil {
-		other.Close()
-		t.Fatal("two owners acquired the project lock")
+		t.Fatalf("two owners acquired the project lock (closing the second: %v)", other.Close())
 	}
 	a, b := filepath.Join(root, "a"), filepath.Join(root, "b")
 	if err := r.Record(b, "", nil); err != nil {
@@ -327,8 +326,7 @@ func TestRegistryNativeFailures(t *testing.T) {
 		}
 		t.Setenv("XDG_STATE_HOME", blockFile)
 		if r, err := Open(root, "project"); err == nil {
-			r.Close()
-			t.Fatal("blocked state directory accepted")
+			t.Fatalf("blocked state directory accepted (closing it: %v)", r.Close())
 		}
 	})
 	t.Run("blocked lock", func(t *testing.T) {
@@ -341,8 +339,7 @@ func TestRegistryNativeFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 		if r, err := Open(root, "project"); err == nil {
-			r.Close()
-			t.Fatal("blocked lock accepted")
+			t.Fatalf("blocked lock accepted (closing it: %v)", r.Close())
 		}
 	})
 	t.Run("blocked atomic save", func(t *testing.T) {

@@ -117,8 +117,7 @@ func TestNotificationErrors(t *testing.T) {
 				}
 			}
 			if n, err := newNotifications(context.Background(), mountPlan{target: base, view: v}, true); err == nil {
-				n.close()
-				t.Fatal("invalid backing handles accepted")
+				t.Fatalf("invalid backing handles accepted (closing them: %v)", n.close())
 			}
 		})
 	}

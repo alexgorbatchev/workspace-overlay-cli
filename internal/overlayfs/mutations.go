@@ -45,15 +45,22 @@ func (n *node) Create(ctx context.Context, name string, flags, mode uint32, out 
 		logged.Close(f)
 		return nil, nil, 0, fs.ToErrno(err)
 	}
+	// The caller gets the error that made the handle useless; a failure to
+	// give the handle back is only worth a log line.
+	abandon := func() {
+		if errno := h.Release(ctx); errno != 0 {
+			log.Printf("release %s: %v", child.relativePath(), errno)
+		}
+	}
 	var attr fuse.AttrOut
 	if errno := h.Getattr(ctx, &attr); errno != 0 {
-		h.Release(ctx)
+		abandon()
 		return nil, nil, 0, errno
 	}
 	out.Attr = attr.Attr
 	stable, err := n.view.stable(child.relativePath())
 	if err != nil {
-		h.Release(ctx)
+		abandon()
 		return nil, nil, 0, fs.ToErrno(err)
 	}
 	return n.NewInode(ctx, child, stable), h, 0, 0

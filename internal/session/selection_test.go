@@ -75,7 +75,7 @@ projects=["*"]
 		t.Fatalf("single selection mismatch: %+v", mounts[0])
 	}
 
-	mounts, err = Selections(cfg, "missing", false, false)
+	_, err = Selections(cfg, "missing", false, false)
 	if err == nil {
 		t.Fatalf("expected error for missing project, got nil")
 	}

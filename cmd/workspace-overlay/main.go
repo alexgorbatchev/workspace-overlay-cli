@@ -107,7 +107,9 @@ func newRootCommand() (*cobra.Command, error) {
 	help := root.HelpFunc()
 	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		if helptree.IsAgentMode() {
-			fmt.Fprintln(cmd.OutOrStdout(), "ALERT: Agents must read `AGENT=1 workspace-overlay skill` before using this tool.")
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "ALERT: Agents must read `AGENT=1 workspace-overlay skill` before using this tool."); err != nil {
+				cmd.PrintErrln(err)
+			}
 		}
 		help(cmd, args)
 	})

@@ -4,7 +4,7 @@ description: Use when mounting, inspecting, or stopping workspace-overlay and ed
 author: alexgorbatchev
 metadata:
   created_on: 2026-10-06 16:00
-  last_modified: 2026-10-07 13:40
+  last_modified: 2026-10-07 17:37
   status: current
 ---
 
@@ -21,7 +21,7 @@ Run `workspace-overlay overlay mount` in a directory with `workspace-overlay.tom
 - `fixture create --directory` (string, default `.tmp/dev-workspace`): Resolve the fixture workspace directory relative to the current directory. Require a nonexistent directory on first creation. Reuse is recognized by `.workspace-overlay-fixture` and requires a valid configuration. Inherited `GIT_*` variables are excluded from fixture Git commands to keep repository writes isolated.
 - `skill`: Print this embedded guide verbatim, offline, without positional arguments or command-specific flags.
 - `help [command]`: Print help for a command path. `--help` / `-h` (bool, default false) prints help on any command. Shell completion generation is disabled.
-- `--version` / `-v` (bool, default false): Apply to the root. Print the raw build version followed by a newline; default builds report `0.1.0`.
+- `--version` / `-v` (bool, default false): Apply to the root. Print the raw version followed by a newline: the release version, such as `0.0.1`, for a released binary and `dev` for any other build.
 
 Set the `AGENT` environment variable to `1`, `true`, or `yes` for compact help with a skill-reading alert; case and surrounding whitespace are ignored. Keep state files under `$XDG_STATE_HOME/workspace-overlay/`; when the `XDG_STATE_HOME` environment variable is unset, empty, or relative, use `~/.local/state/workspace-overlay/` from `HOME`. Send progress and diagnostics to stderr. Abbreviate home paths with `~/`, and the home directory itself with `~`. A failed operation prints only `ERR: <message>` to stderr and exits 1; a mistyped command line prints the command's usage to stderr before that line. Successful commands and clean shutdown exit 0.
 

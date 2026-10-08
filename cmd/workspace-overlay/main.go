@@ -20,7 +20,8 @@ import (
 //go:embed SKILL.md
 var skill string
 
-var version = "0.1.0"
+// version is set by the release build (-ldflags "-X main.version=...").
+var version = "dev"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {

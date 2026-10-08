@@ -136,7 +136,7 @@ Root options:
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `--help` | `-h` | `false` | Print help for any command. |
-| `--version` | `-v` | `false` | Print the raw build version; default builds report `0.1.0`. |
+| `--version` | `-v` | `false` | Print the raw version: the release version for a released binary, `dev` for any other build. |
 
 `workspace-overlay overlay` and its commands:
 

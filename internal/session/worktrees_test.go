@@ -233,7 +233,7 @@ func TestMountProjectsLifecycle(t *testing.T) {
 	_ = mountProjects(canceledCtx, selReplace) // context canceled, error expected
 
 	// Test unmountOverlay on active mount
-	if err := unmountOverlay(context.Background(), projDir); err != nil {
+	if err := unmountOverlay(context.Background(), projDir, nil); err != nil {
 		t.Fatalf("unmountOverlay on active mount error = %v", err)
 	}
 

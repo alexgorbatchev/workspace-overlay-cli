@@ -8,15 +8,15 @@ import (
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/registry"
 )
 
-func stopRegistered(ctx context.Context, root, project string) error {
+func stopRegistered(ctx context.Context, root, project string, confirm Confirm) error {
 	released, err := registry.RequestStop(ctx, root, project)
 	if err != nil || released {
 		return err
 	}
-	return recoverRegistry(ctx, root, project)
+	return recoverRegistry(ctx, root, project, confirm)
 }
 
-func recoverRegistry(ctx context.Context, root, project string) error {
+func recoverRegistry(ctx context.Context, root, project string, confirm Confirm) error {
 	r, err := registry.Acquire(root, project)
 	if err != nil {
 		return err
@@ -28,7 +28,7 @@ func recoverRegistry(ctx context.Context, root, project string) error {
 	}
 	r.Adopt(state)
 	for _, mount := range state.Mounts {
-		if err := unmountOverlay(ctx, mount.Target); err != nil {
+		if err := unmountOverlay(ctx, mount.Target, confirm); err != nil {
 			return err
 		}
 	}

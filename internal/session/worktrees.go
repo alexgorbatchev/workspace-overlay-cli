@@ -23,6 +23,8 @@ type mountPlan struct {
 	target  string
 	sources []config.Source
 	view    *overlayfs.View
+	// confirm decides whether processes that keep the mount busy are stopped.
+	confirm Confirm
 }
 
 // Selection is one configured project to mount, inspect or unmount, with the
@@ -37,10 +39,13 @@ type Selection struct {
 	Worktrees bool
 	// Suppressed lists worktrees that must stay unmounted.
 	Suppressed []string
+	// Confirm decides whether processes that keep a mount busy are stopped
+	// so that it can be unmounted. Without it they are only reported.
+	Confirm Confirm
 }
 
 func stopExisting(ctx context.Context, selection Selection) error {
-	if err := stopRegistered(ctx, selection.Root, selection.Project); err != nil {
+	if err := stopRegistered(ctx, selection.Root, selection.Project, selection.Confirm); err != nil {
 		return err
 	}
 	kind, err := mountedType(ctx, selection.Target)
@@ -48,7 +53,7 @@ func stopExisting(ctx context.Context, selection Selection) error {
 		return err
 	}
 	if kind == overlayfs.FilesystemType {
-		return unmountOverlay(ctx, selection.Target)
+		return unmountOverlay(ctx, selection.Target, selection.Confirm)
 	}
 	return nil
 }
@@ -126,7 +131,7 @@ func mountProjects(ctx context.Context, selection Selection) error {
 	}
 	if selection.Replace {
 		for _, target := range targets {
-			if err := unmountOverlay(ctx, target); err != nil {
+			if err := unmountOverlay(ctx, target, selection.Confirm); err != nil {
 				return err
 			}
 		}
@@ -169,7 +174,7 @@ func Mount(ctx context.Context, selections []Selection) error {
 		}
 		if selection.Replace {
 			for _, name := range names {
-				if err := unmountOverlay(ctx, name); err != nil {
+				if err := unmountOverlay(ctx, name, selection.Confirm); err != nil {
 					return err
 				}
 			}
@@ -267,7 +272,7 @@ func manageProjects(ctx context.Context, out io.Writer, action string, selection
 		return err
 	}
 	if action == "unmount" {
-		if err := stopRegistered(ctx, selection.Root, selection.Project); err != nil {
+		if err := stopRegistered(ctx, selection.Root, selection.Project, selection.Confirm); err != nil {
 			return err
 		}
 	}
@@ -288,7 +293,7 @@ func manageProjects(ctx context.Context, out io.Writer, action string, selection
 	var result error
 	for _, target := range targets {
 		if action == "unmount" {
-			result = errors.Join(result, unmountOverlay(ctx, target))
+			result = errors.Join(result, unmountOverlay(ctx, target, selection.Confirm))
 			continue
 		}
 		kind, err := mountedType(ctx, target)

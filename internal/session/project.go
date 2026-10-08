@@ -54,7 +54,7 @@ func (plan mountPlan) discard(records *registry.Registry) error {
 }
 
 func preparePlan(ctx context.Context, selection Selection, target string, template *gitexclude.File, records *registry.Registry) (plan mountPlan, result error) {
-	plan = mountPlan{target: target, sources: selection.Sources, view: &overlayfs.View{}}
+	plan = mountPlan{target: target, sources: selection.Sources, view: &overlayfs.View{}, confirm: selection.Confirm}
 	defer func() {
 		if result != nil {
 			result = errors.Join(result, plan.discard(records))

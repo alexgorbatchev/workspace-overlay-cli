@@ -84,6 +84,10 @@ func newRootCommand() (*cobra.Command, error) {
 			if err != nil {
 				return err
 			}
+			confirm := confirmStop(cmd.InOrStdin(), cmd.ErrOrStderr())
+			for i := range selections {
+				selections[i].Confirm = confirm
+			}
 			if action == "mount" {
 				return session.Mount(cmd.Context(), selections)
 			}

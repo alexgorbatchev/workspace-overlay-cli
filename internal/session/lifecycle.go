@@ -92,7 +92,9 @@ func findmnt(ctx context.Context, selector, path string) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-func unmountOverlay(ctx context.Context, target string) error {
+// unmountOverlay removes the overlay mounted at target. When processes keep
+// it busy, confirm decides whether they are stopped; see release.
+func unmountOverlay(ctx context.Context, target string, confirm Confirm) error {
 	kind, err := mountedType(ctx, target)
 	if err != nil {
 		return err
@@ -107,9 +109,11 @@ func unmountOverlay(ctx context.Context, target string) error {
 	if err != nil {
 		return err
 	}
-	data, err := subprocess.CombinedOutput(ctx, exec.CommandContext(ctx, "fusermount3", "-u", "--", target))
-	if err != nil {
-		return fmt.Errorf("unmount %s: %w: %s", target, err, strings.TrimSpace(string(data)))
-	}
-	return nil
+	return release(ctx, target, confirm, func() error {
+		data, err := subprocess.CombinedOutput(ctx, exec.CommandContext(ctx, "fusermount3", "-u", "--", target))
+		if err != nil {
+			return fmt.Errorf("unmount %s: %w: %s", target, err, strings.TrimSpace(string(data)))
+		}
+		return nil
+	})
 }

@@ -60,13 +60,13 @@ func TestUnmountOverlay(t *testing.T) {
 
 	t.Run("unmount unmounted directory", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		if err := unmountOverlay(ctx, tmpDir); err != nil {
+		if err := unmountOverlay(ctx, tmpDir, nil); err != nil {
 			t.Fatalf("unmountOverlay on unmounted dir error = %v", err)
 		}
 	})
 
 	t.Run("refuse to unmount non-overlay filesystem", func(t *testing.T) {
-		err := unmountOverlay(ctx, "/")
+		err := unmountOverlay(ctx, "/", nil)
 		if err == nil || !strings.Contains(err.Error(), "refusing to unmount") {
 			t.Errorf("expected error refusing to unmount non-overlay filesystem, got %v", err)
 		}
@@ -82,7 +82,7 @@ func TestMountInspectionNeedsWorkingDirectory(t *testing.T) {
 	if _, err := mountedType(context.Background(), "."); err == nil {
 		t.Fatal("mount status accepted removed working directory")
 	}
-	if err := unmountOverlay(context.Background(), "."); err == nil {
+	if err := unmountOverlay(context.Background(), ".", nil); err == nil {
 		t.Fatal("unmount accepted removed working directory")
 	}
 }

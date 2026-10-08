@@ -20,9 +20,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # The tests mount real overlays, which needs fusermount3.
+      # The tests mount real overlays, which needs fusermount3, and name the
+      # processes that keep one busy, which needs fuser.
       - name: Install FUSE
-        run: sudo apt-get update && sudo apt-get install --yes fuse3
+        run: sudo apt-get update && sudo apt-get install --yes fuse3 psmisc
 
       - name: Check module hygiene
         run: go mod tidy -diff

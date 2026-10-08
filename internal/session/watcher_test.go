@@ -121,7 +121,7 @@ func TestLiveWorktreeDiscovery(t *testing.T) {
 	if err != nil || string(data) != "shared" {
 		t.Fatalf("shared overlay: %q, %v", data, err)
 	}
-	if err := unmountOverlay(context.Background(), worktree); err != nil {
+	if err := unmountOverlay(context.Background(), worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	waitMount(t, worktree, "")

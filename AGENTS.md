@@ -17,12 +17,12 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - Run AI: `AGENT=1 go run ./cmd/workspace-overlay <args>` or `just run-ai <args>`
 
 ## Setup
-- Requires Linux with accessible `/dev/fuse` and the `git`, `findmnt`, and `fusermount3` commands on `PATH`.
+- Requires Linux with accessible `/dev/fuse` and the `git`, `findmnt`, and `fusermount3` commands on `PATH`. `fuser` (psmisc) names the processes that keep a mount busy; the tests need it.
 - Pre-mount directory handles (`os.OpenRoot`) keep the backing project accessible under the mount.
 - Copy `workspace-overlay.example.toml` into the workspace as `workspace-overlay.toml` and adjust its project and source paths. Runtime configuration and overlay data belong to that workspace.
 
 ## Conventions
-- Layout: `cmd/workspace-overlay` only wires commands and embeds `SKILL.md`. Code lives in `internal/` by responsibility: `config` (TOML), `overlayfs` (merged view and FUSE nodes), `session` (mounting, worktrees, recovery), `registry` (state files), `gitexclude`, `fixture`, `pathname`, `gitrepo`, `subprocess` (external commands), `logged`. `internal/scratch` is test support and is excluded from the coverage gate.
+- Layout: `cmd/workspace-overlay` only wires commands and embeds `SKILL.md`. Code lives in `internal/` by responsibility: `config` (TOML), `overlayfs` (merged view and FUSE nodes), `session` (mounting, worktrees, recovery), `holder` (finding and stopping the processes that keep a mount busy), `registry` (state files), `gitexclude`, `fixture`, `pathname`, `gitrepo`, `subprocess` (external commands), `logged`. `internal/scratch` is test support and is excluded from the coverage gate.
 - Module path: `github.com/alexgorbatchev/workspace-overlay-cli`. Group imports as standard library, third-party, then this module (`goimports -local github.com/alexgorbatchev/workspace-overlay-cli`).
 - `overlayfs` tests mount a view directly with `View.Mount`; only `session` tests go through `Mount`, the registry and Git exclusions.
 - Keep README usage focused on operating the background utility; omit sample terminal output blocks.
@@ -40,7 +40,9 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - `run(args, stdout, stderr)` is the testable entrypoint. `TestGuideDocumentsEveryCommandAndFlag` fails when `SKILL.md` misses a command or flag.
 - Configure ordered overlays and projects through `workspace-overlay.toml`; `--config` selects a file, otherwise discover it in ancestors of the current directory. Relative paths resolve from the directory that holds the file, with symbolic links in that directory's path resolved. A configuration file that is itself a symbolic link is not followed (`located` in `internal/config`), so a workspace can link to a configuration kept elsewhere and still name its projects from its own root.
 - Watch Git common metadata and overlay sources through fsnotify using native backing directory handles. Reconcile registered worktrees after debounced events and use a slow fallback scan for missed events.
-- The user approved go-fuse/v2, Cobra, cobra-help-tree/v2, fsnotify, go-toml/v2, and doublestar dependencies.
+- The user approved go-fuse/v2, Cobra, cobra-help-tree/v2, fsnotify, go-toml/v2, doublestar, and tablewriter (human-mode tables) dependencies.
+- Busy unmounts: every unmount goes through `release` in `internal/session`. When processes use the mount, the error (`BusyError`) names each one with its PID, command, and working directory, for `overlay unmount`, `--replace`, and a stopped `overlay mount` alike. In human mode with stdin and stderr on a terminal, `confirmStop` in `cmd/workspace-overlay` shows them as a table and asks whether to stop them and unmount again; never ask in agent mode or without a terminal.
+- Find those processes only with `holder.Find`, which runs `fuser --ismountpoint --mount`, and only for a target that is an overlay mount: without the mount-point check, a path on an ordinary disk names every process on that disk, and the next step stops them.
 - Keep the repository self-contained; integration tests create temporary projects and worktrees instead of relying on sibling fixtures. `internal/session/example_config_test.go` exercises the shipped configuration with mounted reads and writes.
 - Keep the CLI checkout at its current location until the user requests relocation.
 - Generate live verification projects through `fixture create`; share embedded fixture data with integration tests and retain edits across restarts. Use mock names `alpha`, `beta`, and `workspace` in fixtures and examples.

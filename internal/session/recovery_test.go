@@ -104,7 +104,7 @@ projects=['*']
 	_ = owner.Wait() // a killed process always reports an error
 	t.Cleanup(func() {
 		for _, target := range targets {
-			if err := unmountOverlay(context.Background(), target); err != nil {
+			if err := unmountOverlay(context.Background(), target, nil); err != nil {
 				t.Logf("cleanup unmount: %v", err)
 			}
 		}
@@ -255,7 +255,7 @@ func TestKilledOwnerAlwaysExits(t *testing.T) {
 			<-exited
 		}
 		for _, target := range targets {
-			if err := unmountOverlay(context.Background(), target); err != nil {
+			if err := unmountOverlay(context.Background(), target, nil); err != nil {
 				t.Errorf("remove the dead mount %s: %v", target, err)
 			}
 		}
@@ -316,7 +316,7 @@ func TestStopRequestRemovedOnceOwnerIsGone(t *testing.T) {
 
 	finished := make(chan error, 1)
 	go func() {
-		finished <- stopRegistered(context.Background(), root, "project")
+		finished <- stopRegistered(context.Background(), root, "project", nil)
 	}()
 
 	// Poll until stop file is created

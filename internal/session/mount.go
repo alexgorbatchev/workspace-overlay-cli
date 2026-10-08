@@ -25,7 +25,8 @@ func serve(ctx context.Context, plan mountPlan) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
-		if err := server.Unmount(); err != nil {
+		// The stop request ended ctx, and the unmount still has work to do.
+		if err := release(context.WithoutCancel(ctx), plan.target, plan.confirm, server.Unmount); err != nil {
 			return fmt.Errorf("unmount overlay: %w", err)
 		}
 		<-done

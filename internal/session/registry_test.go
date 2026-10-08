@@ -31,7 +31,7 @@ func TestRegistryPreservesUnfinishedCleanup(t *testing.T) {
 	if next, err := registry.Open(root, "project"); err == nil {
 		t.Fatalf("stale registry overwritten without explicit recovery (closing it: %v)", next.Close())
 	}
-	if err := recoverRegistry(context.Background(), root, "project"); err != nil {
+	if err := recoverRegistry(context.Background(), root, "project", nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -62,7 +62,7 @@ func TestRegistryRecovery(t *testing.T) {
 	}
 	// Model a terminated owner by unlocking without cleaning up (not calling Close).
 	r.Unlock()
-	if err := recoverRegistry(context.Background(), root, "project"); err != nil {
+	if err := recoverRegistry(context.Background(), root, "project", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := string(scratch.Read(t, exclude)); got != string(original)+"personal-pattern\n" {
@@ -93,7 +93,7 @@ func TestRegistryRecoveryRetainsChangedBlock(t *testing.T) {
 	scratch.Write(t, g.Path(), strings.Replace(string(scratch.Read(t, g.Path())), "/generated.md", "/edited.md", 1))
 	// Model a terminated owner by unlocking without closing
 	r.Unlock()
-	if err := recoverRegistry(context.Background(), root, "project"); err == nil {
+	if err := recoverRegistry(context.Background(), root, "project", nil); err == nil {
 		t.Fatal("changed managed block overwritten")
 	}
 	state, err := registry.Read(root, "project")
@@ -113,7 +113,7 @@ func TestStopRecoversTerminatedOwner(t *testing.T) {
 	}
 	// Model a terminated owner by unlocking
 	r.Unlock()
-	if err := stopRegistered(context.Background(), root, "project"); err != nil {
+	if err := stopRegistered(context.Background(), root, "project", nil); err != nil {
 		t.Fatal(err)
 	}
 	state, err := registry.Read(root, "project")
@@ -133,7 +133,7 @@ func TestRecoveryRefusesLiveOwner(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if err := recoverRegistry(context.Background(), root, "project"); err == nil {
+	if err := recoverRegistry(context.Background(), root, "project", nil); err == nil {
 		t.Fatal("recovery took over live owner")
 	}
 }

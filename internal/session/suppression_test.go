@@ -75,7 +75,7 @@ func TestWorktreeRegisteredAgainIsMountedAgain(t *testing.T) {
 			}
 			metadata := strings.TrimSpace(string(out))
 
-			if err := unmountOverlay(context.Background(), worktree); err != nil {
+			if err := unmountOverlay(context.Background(), worktree, nil); err != nil {
 				t.Fatal(err)
 			}
 			// Two rounds: a mount wrongly started by the first is up by the second.

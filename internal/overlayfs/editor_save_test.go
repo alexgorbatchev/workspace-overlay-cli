@@ -43,7 +43,11 @@ func mountMarkedDocument(t *testing.T, overlays ...string) markedDocument {
 	texts := map[string]string{"workspace": workspaceText, "alpha": alphaText}
 	for _, name := range overlays {
 		source := filepath.Join(root, ".ai", name)
-		doc.sources[name] = scratch.Write(t, filepath.Join(source, "AGENTS.md"), texts[name])
+		text, known := texts[name]
+		if !known {
+			text = "# " + name + "\n"
+		}
+		doc.sources[name] = scratch.Write(t, filepath.Join(source, "AGENTS.md"), text)
 		sourceRoot, err := os.OpenRoot(source)
 		if err != nil {
 			t.Fatal(err)
@@ -536,4 +540,60 @@ func TestShorterContentReplacesMergedFile(t *testing.T) {
 			t.Errorf("file = %q, want %q", got, "project\nshort\n")
 		}
 	})
+}
+
+// One overlay's name can begin with another's. Their markers then begin
+// alike too, and each section must still be told apart from the other.
+func TestOverlayNamesSharingAPrefixKeepTheirSections(t *testing.T) {
+	orders := [][]string{{"alpha", "alpha2"}, {"alpha2", "alpha"}}
+	for _, overlays := range orders {
+		for _, edited := range overlays {
+			t.Run(overlays[0]+" before "+overlays[1]+", "+edited+" edited", func(t *testing.T) {
+				doc := mountMarkedDocument(t, overlays...)
+				want := map[string]string{"alpha": alphaText, "alpha2": "# alpha2\n"}
+				document := projectText + section(overlays[0], want[overlays[0]]) + section(overlays[1], want[overlays[1]])
+				if got := string(scratch.Read(t, doc.file)); got != document {
+					t.Fatalf("document = %q, want %q", got, document)
+				}
+				want[edited] += "- edited\n"
+				document = projectText + section(overlays[0], want[overlays[0]]) + section(overlays[1], want[overlays[1]])
+
+				scratch.Write(t, doc.file, document)
+
+				for _, name := range overlays {
+					if got := string(scratch.Read(t, doc.sources[name])); got != want[name] {
+						t.Errorf("%s source = %q, want %q", name, got, want[name])
+					}
+				}
+				if got, _ := doc.projectCopy(t); got != projectText {
+					t.Errorf("project copy = %q, want it unchanged", got)
+				}
+			})
+		}
+	}
+}
+
+// A document that lost one overlay's section must be refused, not saved with
+// the similarly named overlay's section in its place.
+func TestMissingSectionIsNotTakenFromSimilarlyNamedOverlay(t *testing.T) {
+	orders := [][]string{{"alpha", "alpha2"}, {"alpha2", "alpha"}}
+	for _, overlays := range orders {
+		for _, kept := range overlays {
+			t.Run(overlays[0]+" before "+overlays[1]+", only "+kept+" kept", func(t *testing.T) {
+				doc := mountMarkedDocument(t, overlays...)
+				original := map[string]string{"alpha": alphaText, "alpha2": "# alpha2\n"}
+
+				err := os.WriteFile(doc.file, []byte(projectText+section(kept, "# replaced\n")), 0644)
+
+				if !errors.Is(err, syscall.EPERM) {
+					t.Errorf("saving a document without one section = %v, want EPERM", err)
+				}
+				for _, name := range overlays {
+					if got := string(scratch.Read(t, doc.sources[name])); got != original[name] {
+						t.Errorf("%s source = %q, want it unchanged", name, got)
+					}
+				}
+			})
+		}
+	}
 }

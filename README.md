@@ -40,7 +40,7 @@
 # Prerequisites
 
 - Linux with accessible [`/dev/fuse`](https://docs.kernel.org/filesystems/fuse/fuse.html) for mounting the project view.
-- [`fusermount3`](https://github.com/libfuse/libfuse) on `PATH` for unmounting. The CLI invokes it for you.
+- [`fusermount3`](https://github.com/libfuse/libfuse) on `PATH` for mounting and unmounting. The CLI invokes it for you.
 - [`findmnt`](https://man7.org/linux/man-pages/man8/findmnt.8.html) on `PATH` for mount inspection.
 - [`git`](https://git-scm.com/docs/git-worktree) on `PATH` for versioned projects, worktree discovery, and repository exclusions. Unversioned projects mount without Git metadata.
 - Existing, readable project and source directories; writable sources for overlay edits.

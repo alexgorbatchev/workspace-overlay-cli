@@ -1,5 +1,8 @@
 `workspace-overlay` gives developers and coding agents a writable, layered view of project directories. Keep shared instructions, skills, and project-specific files in separate source directories, then expose them together in each project and its Git worktrees. This is useful when you are working on open source or enterprise projects and can't commit your AI files into the project. It especially useful if your workspace consists of multiple repositories and you want to have workspace and per-project AI files.
 
+> [!WARNING]
+> Saving a merged file from Vim with its default settings loses data: the project's copy of the file is deleted and its text is written into an overlay source. Add `set backupcopy=yes` to your vimrc before editing files in a mounted project. See [How it Really Works](#how-it-really-works) for the details.
+
 # What It Does
 
 - **Shared overlays:** Apply ordered overlay directories to any configured projects.

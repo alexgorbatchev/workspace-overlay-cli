@@ -260,6 +260,61 @@ func TestSymlinkedConfigResolvesToRealTarget(t *testing.T) {
 	}
 }
 
+// A configuration file that is itself a symbolic link belongs to the directory the
+// link is in, so a workspace can keep the file elsewhere and still name its projects
+// and sources from its own root.
+func TestLinkedConfigResolvesFromTheLinkDirectory(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := filepath.Join(root, "workspace")
+	project := filepath.Join(workspace, "project")
+	scratch.GitRepo(t, project)
+	source := scratch.Mkdir(t, filepath.Join(workspace, "layers", "shared"))
+	stored := scratch.Write(t, filepath.Join(root, "stored", Name), "version=1\n[projects.project]\npath='project'\n[[overlays]]\nname='shared'\nsource='layers/shared'\nprojects=['*']\n")
+	link := filepath.Join(workspace, Name)
+	if err := os.Symlink(stored, link); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(workspace, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct{ name, dir, config string }{
+		{"named link", root, link},
+		{"link named through a symlinked workspace", root, filepath.Join(alias, Name)},
+		{"link discovered from a project", project, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Chdir(tt.dir)
+			file, err := Path(tt.config)
+			if err != nil || file != link {
+				t.Fatalf("Path(%q) = %q, %v; want the link %q", tt.config, file, err, link)
+			}
+			cfg, err := Load(tt.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selections, err := cfg.Selections("")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := selections[0].Root; got != workspace {
+				t.Errorf("root = %q, want the directory holding the link %q", got, workspace)
+			}
+			if got := selections[0].Target; got != project {
+				t.Errorf("target = %q, want %q", got, project)
+			}
+			if got := selections[0].Sources[0].Path; got != source {
+				t.Errorf("source = %q, want %q", got, source)
+			}
+		})
+	}
+}
+
 // A project or overlay source that is itself a symbolic link is addressed by
 // its real location, the directory the mount and the watcher act on.
 func TestSymlinkedProjectAndSourceResolveToRealPaths(t *testing.T) {

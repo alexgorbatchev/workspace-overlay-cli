@@ -56,15 +56,16 @@ type Selection struct {
 	Sources               []Source
 }
 
-// Path returns the canonical path to a configuration file, discovering it in the working
-// directory and its ancestors when name is empty, or validating the provided path.
+// Path returns the path to a configuration file, discovering it in the working directory
+// and its ancestors when name is empty, or validating the provided path. The directory
+// holding the file is canonical; the file itself is not followed when it is a symbolic link.
 func Path(name string) (string, error) {
 	if name != "" {
 		abs, err := filepath.Abs(name)
 		if err != nil {
 			return "", err
 		}
-		return pathname.Canonical(abs), nil
+		return located(abs), nil
 	}
 	dir, err := os.Getwd()
 	if err != nil {
@@ -73,7 +74,7 @@ func Path(name string) (string, error) {
 	for {
 		name := filepath.Join(dir, Name)
 		if _, err := os.Stat(name); err == nil {
-			return pathname.Canonical(name), nil
+			return located(name), nil
 		} else if !os.IsNotExist(err) {
 			return "", err
 		}
@@ -83,6 +84,13 @@ func Path(name string) (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// located resolves symbolic links in the directory that holds a configuration file and
+// keeps the file's own name. Relative paths in the file resolve from that directory, so a
+// link to a configuration stored elsewhere describes the workspace the link is in.
+func located(name string) string {
+	return filepath.Join(pathname.Canonical(filepath.Dir(name)), filepath.Base(name))
 }
 
 // Load reads and validates a configuration file.

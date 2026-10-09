@@ -97,20 +97,25 @@ func (v *View) vacate(name string, mode os.FileMode) {
 }
 
 // document returns the sections that the marked file at name is laid out
-// with, given the layers that contribute to it. A document keeps its project
-// section, now empty, after its project copy was removed through this mount:
-// a program that removes a file and then writes it again, as Vim does when it
-// saves, writes the same document it read, and the text it puts in that
-// section becomes the project copy again.
+// with, given the layers that contribute to it. Only the project's own text
+// goes without markers, so a document that the project has no copy of begins
+// with an empty project section and every overlay in it is marked: the first
+// overlay is not shown as if it were the project's text, and text written
+// above the first marker becomes the project's copy.
+//
+// A file that a single overlay supplies is not a document: it is served as
+// that overlay's file. It becomes one when its project copy was removed
+// through this mount, so that a program that removes a file and then writes
+// it again, as Vim does when it saves, writes the same document it read.
 func (v *View) document(name string, parts []contribution) []contribution {
 	v.vacatedMu.Lock()
 	defer v.vacatedMu.Unlock()
-	if _, vacated := v.vacated[name]; !vacated {
+	if parts[0].index == 0 {
+		// The project has its copy, whether it kept it or got it back.
+		delete(v.vacated, name)
 		return parts
 	}
-	if parts[0].index == 0 {
-		// The project copy is back.
-		delete(v.vacated, name)
+	if _, vacated := v.vacated[name]; !vacated && len(parts) == 1 {
 		return parts
 	}
 	return append([]contribution{{index: 0}}, parts...)
@@ -149,7 +154,13 @@ func (v *View) saveSections(name string, sections []parsedSection, restore func(
 		current, err := root.ReadFile(name)
 		if errors.Is(err, os.ErrNotExist) && sec.index == 0 {
 			if len(sec.data) > 0 {
-				if err := restore(name, sec.data); err != nil {
+				err := restore(name, sec.data)
+				if errors.Is(err, os.ErrNotExist) {
+					// The project has no directory for the file, so its text
+					// has nowhere to go.
+					return syscall.EPERM
+				}
+				if err != nil {
 					return err
 				}
 			}

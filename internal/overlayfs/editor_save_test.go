@@ -597,3 +597,93 @@ func TestMissingSectionIsNotTakenFromSimilarlyNamedOverlay(t *testing.T) {
 		}
 	}
 }
+
+// removeProjectCopy takes the project's own AGENTS.md away behind the mount,
+// which leaves a document that only overlays contribute to.
+func (d markedDocument) removeProjectCopy(t *testing.T) {
+	t.Helper()
+	if err := d.view.Project().Remove("AGENTS.md"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Only the project's own text goes without markers. In a document that the
+// project has no copy of, every overlay is marked, the first one included,
+// and the place above the first marker stays the project's.
+func TestEveryOverlayIsMarkedWithoutProjectCopy(t *testing.T) {
+	doc := mountMarkedDocument(t, "workspace", "alpha")
+	doc.removeProjectCopy(t)
+	document := section("workspace", workspaceText) + section("alpha", alphaText)
+
+	if got := string(scratch.Read(t, doc.file)); got != document {
+		t.Fatalf("document = %q, want %q", got, document)
+	}
+	info, err := os.Stat(doc.file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != int64(len(document)) {
+		t.Errorf("size = %d, want %d", info.Size(), len(document))
+	}
+
+	// An edit inside the first overlay's markers is that overlay's.
+	scratch.Write(t, doc.file, section("workspace", workspaceText+"- edited\n")+section("alpha", alphaText))
+	if got := string(scratch.Read(t, doc.sources["workspace"])); got != workspaceText+"- edited\n" {
+		t.Errorf("workspace source = %q, want its edited section", got)
+	}
+	if _, exists := doc.projectCopy(t); exists {
+		t.Error("an edit to an overlay created a project copy")
+	}
+
+	// Text above the first marker is the project's, not the first overlay's.
+	scratch.Write(t, doc.file, "# Project notes\n"+section("workspace", workspaceText+"- edited\n")+section("alpha", alphaText))
+	if got, _ := doc.projectCopy(t); got != "# Project notes\n" {
+		t.Errorf("project copy = %q, want the text written above the first marker", got)
+	}
+	if got := string(scratch.Read(t, doc.sources["workspace"])); got != workspaceText+"- edited\n" {
+		t.Errorf("workspace source = %q, want it unchanged by the project's text", got)
+	}
+	if got := string(scratch.Read(t, doc.sources["alpha"])); got != alphaText {
+		t.Errorf("alpha source = %q, want it unchanged", got)
+	}
+}
+
+// Where the project has no directory for the file, text above the first
+// marker has nowhere to go, and the save is refused.
+func TestProjectTextWithoutProjectDirectoryIsRefused(t *testing.T) {
+	doc := mountMarkedDocument(t, "workspace", "alpha")
+	var nested []string
+	for _, name := range []string{"workspace", "alpha"} {
+		nested = append(nested, scratch.Write(t, filepath.Join(filepath.Dir(doc.sources[name]), "only", "overlays", "notes.md"), "# "+name+"\n"))
+	}
+	if err := doc.view.RefreshPaths(); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(filepath.Dir(doc.file), "only", "overlays", "notes.md")
+	sections := "<!-- BEGIN WORKSPACE-OVERLAY: workspace (../.ai/workspace/only/overlays/notes.md) -->\n# workspace\n<!-- END WORKSPACE-OVERLAY: workspace (../.ai/workspace/only/overlays/notes.md) -->\n" +
+		"<!-- BEGIN WORKSPACE-OVERLAY: alpha (../.ai/alpha/only/overlays/notes.md) -->\n# alpha\n<!-- END WORKSPACE-OVERLAY: alpha (../.ai/alpha/only/overlays/notes.md) -->\n"
+	if got := string(scratch.Read(t, file)); got != sections {
+		t.Fatalf("document = %q, want %q", got, sections)
+	}
+
+	err := os.WriteFile(file, []byte("# stray\n"+sections), 0644)
+
+	if !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("saving project text where the project has no directory = %v, want EPERM", err)
+	}
+	for i, name := range []string{"workspace", "alpha"} {
+		if got := string(scratch.Read(t, nested[i])); got != "# "+name+"\n" {
+			t.Errorf("%s source = %q, want it unchanged", name, got)
+		}
+	}
+}
+
+// A file that a single overlay supplies is that overlay's file as it is.
+func TestFileFromOneOverlayIsServedUnmarked(t *testing.T) {
+	doc := mountMarkedDocument(t, "workspace")
+	doc.removeProjectCopy(t)
+
+	if got := string(scratch.Read(t, doc.file)); got != workspaceText {
+		t.Fatalf("file = %q, want the overlay's text alone", got)
+	}
+}

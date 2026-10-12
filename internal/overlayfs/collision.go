@@ -2,9 +2,7 @@ package overlayfs
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -13,7 +11,6 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 
-	"github.com/alexgorbatchev/workspace-overlay-cli/internal/logged"
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/pathname"
 )
 
@@ -44,15 +41,9 @@ Then open the file again.
 
 // binary reports whether a contribution cannot be joined with others as text.
 func (v *View) binary(name string, part contribution) (bool, error) {
-	f, err := v.layers[part.index].root.Open(name)
-	if err != nil {
-		return false, err
-	}
-	defer logged.Close(f)
 	head := make([]byte, sniffLength)
-	n, err := io.ReadFull(f, head)
-	// A file shorter than the sniffed window is classified by what it holds.
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+	n, err := v.sniffs.read(v.layers[part.index].root, sniffKey{layer: part.index, name: name}, part.info, head, 0)
+	if err != nil {
 		return false, err
 	}
 	return !strings.HasPrefix(http.DetectContentType(head[:n]), "text/"), nil
@@ -64,25 +55,31 @@ func (v *View) collisionNotice(name string, parts []contribution) ([]byte, error
 	if len(parts) < 2 {
 		return nil, nil
 	}
-	var copies strings.Builder
+	binaryCopies := make([]bool, len(parts))
 	collides := false
-	for _, part := range parts {
+	for i, part := range parts {
 		binary, err := v.binary(name, part)
 		if err != nil {
 			return nil, err
 		}
+		binaryCopies[i] = binary
+		collides = collides || binary
+	}
+	if !collides {
+		return nil, nil
+	}
+	// Most collisions join as text and need no explanation or display paths.
+	var copies strings.Builder
+	for i, part := range parts {
 		layer, kind := "overlay", "text"
 		if part.index == 0 {
 			layer = "project"
 		}
-		if binary {
-			kind, collides = "binary", true
+		if binaryCopies[i] {
+			kind = "binary"
 		}
 		location := pathname.Display(filepath.Join(v.layers[part.index].root.Name(), name))
 		fmt.Fprintf(&copies, "  - %s (%s, %s)\n", location, layer, kind)
-	}
-	if !collides {
-		return nil, nil
 	}
 	return []byte(fmt.Sprintf(noticeHeader, name) + copies.String() + fmt.Sprintf(noticeFooter, sniffLength)), nil
 }

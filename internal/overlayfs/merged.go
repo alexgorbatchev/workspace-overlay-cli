@@ -54,17 +54,7 @@ func (n *node) renderMarkedData(parts []contribution, rule *MarkerRule) ([]byte,
 
 	for i := 1; i < len(parts); i++ {
 		l := n.view.layers[parts[i].index]
-		name := l.name
-		if name == "" {
-			name = filepath.Base(l.root.Name())
-		}
-		relPath, err := filepath.Rel(n.view.layers[0].root.Name(), filepath.Join(l.root.Name(), n.relativePath()))
-		if err != nil {
-			relPath = filepath.Join(l.root.Name(), n.relativePath())
-		}
-
-		start := formatMarker(rule.Start, name, relPath)
-		end := formatMarker(rule.End, name, relPath)
+		start, end := n.view.sectionMarkers(n.relativePath(), parts[i].index, rule)
 
 		overlayBytes, err := l.root.ReadFile(n.relativePath())
 		if err != nil {
@@ -85,6 +75,19 @@ func (n *node) renderMarkedData(parts []contribution, rule *MarkerRule) ([]byte,
 	}
 
 	return buf.Bytes(), nil
+}
+
+func (v *View) sectionMarkers(name string, index int, rule *MarkerRule) (string, string) {
+	layer := v.layers[index]
+	label := layer.name
+	if label == "" {
+		label = filepath.Base(layer.root.Name())
+	}
+	location := filepath.Join(layer.root.Name(), name)
+	if relative, err := filepath.Rel(v.layers[0].root.Name(), location); err == nil {
+		location = relative
+	}
+	return formatMarker(rule.Start, label, location), formatMarker(rule.End, label, location)
 }
 
 func (n *node) openMerged(ctx context.Context, flags uint32, parts []contribution) (fs.FileHandle, uint32, syscall.Errno) {

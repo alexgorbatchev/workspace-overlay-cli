@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -15,6 +16,15 @@ type MarkerRule struct {
 	Glob  string
 	Start string
 	End   string
+}
+
+const markerMatchLimit = 1024
+
+// Rule matching depends only on configuration and the path, never on the
+// caller or source contents. Bound the decisions retained during long mounts.
+type markerMatches struct {
+	mu    sync.RWMutex
+	paths map[string]*MarkerRule
 }
 
 var defaultMarkerRules = []MarkerRule{
@@ -54,21 +64,44 @@ func DefaultMarkerRules() []MarkerRule {
 // SetMarkers attaches the marker rules of the view. The first rule that
 // matches a file applies to it.
 func (v *View) SetMarkers(rules []MarkerRule) {
+	v.matches.mu.Lock()
+	defer v.matches.mu.Unlock()
 	v.markers = rules
+	v.matches.paths = nil
 }
 
 // findMarkerRule returns the first marker rule matching path, or nil.
 func (v *View) findMarkerRule(path string) *MarkerRule {
+	v.matches.mu.RLock()
+	rule, ok := v.matches.paths[path]
+	v.matches.mu.RUnlock()
+	if ok {
+		return rule
+	}
+	v.matches.mu.Lock()
+	defer v.matches.mu.Unlock()
+	rule = v.matchMarkerRule(path)
+	if v.matches.paths == nil {
+		v.matches.paths = make(map[string]*MarkerRule)
+	}
+	if len(v.matches.paths) < markerMatchLimit {
+		v.matches.paths[path] = rule
+	}
+	return rule
+}
+
+func (v *View) matchMarkerRule(path string) *MarkerRule {
 	if len(v.markers) == 0 {
 		return nil
 	}
 	base := filepath.Base(path)
-	for _, rule := range v.markers {
+	for i := range v.markers {
+		rule := &v.markers[i]
 		if matched, _ := doublestar.Match(rule.Glob, base); matched {
-			return &rule
+			return rule
 		}
 		if matched, _ := doublestar.Match(rule.Glob, path); matched {
-			return &rule
+			return rule
 		}
 	}
 	return nil
@@ -102,9 +135,9 @@ func parseMarkedDocument(data []byte, parts []contribution, layers []layer, rule
 	}
 
 	type markerSpan struct {
-		name                 string
-		startPos, startEnd   int
-		endPos, endEnd       int
+		name                     string
+		startPos, startEnd       int
+		endPos, endEnd           int
 		contentStart, contentEnd int
 	}
 

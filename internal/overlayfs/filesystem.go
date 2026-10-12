@@ -37,7 +37,7 @@ func attributes(info os.FileInfo, out *fuse.AttrOut) {
 
 func (n *node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	child := &node{view: n.view, path: path.Join(n.relativePath(), name)}
-	if errno := child.prepareGetattr(); errno != 0 {
+	if errno := child.prepareGetattr(child.path); errno != 0 {
 		return nil, errno
 	}
 	cacheable := n.view.cache.watch(n, name)
@@ -49,7 +49,7 @@ func (n *node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 		return nil, fs.ToErrno(err)
 	}
 	var attr fuse.AttrOut
-	if errno := child.getattr(ctx, parts, &attr); errno != 0 {
+	if errno := child.getattr(ctx, child.path, parts, &attr); errno != 0 {
 		return nil, errno
 	}
 	out.Attr = attr.Attr
@@ -70,47 +70,28 @@ func (n *node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 		log.Printf("refresh Git exclusions: %v", err)
 		return nil, syscall.EIO
 	}
-	entries, err := n.view.entries(n.relativePath())
+	result, err := n.view.directoryEntries(n.relativePath())
 	if err != nil {
 		return nil, fs.ToErrno(err)
-	}
-	result := make([]fuse.DirEntry, 0, len(entries))
-	for _, entry := range entries {
-		var info os.FileInfo
-		parts, err := n.view.resolve(path.Join(n.relativePath(), entry.Name()))
-		switch {
-		case errors.Is(err, os.ErrNotExist):
-			// Removed while the directory was being listed.
-			continue
-		case err != nil:
-			// The entry stays unusable, but its siblings must remain listable.
-			if info, err = entry.Info(); err != nil {
-				continue
-			}
-		default:
-			info = parts[len(parts)-1].info
-		}
-		var attr fuse.AttrOut
-		attributes(info, &attr)
-		result = append(result, fuse.DirEntry{Name: entry.Name(), Mode: attr.Mode})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return fs.NewListDirStream(result), 0
 }
 
 func (n *node) Getattr(ctx context.Context, handle fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	if errno := n.prepareGetattr(); errno != 0 {
+	name := n.relativePath()
+	if errno := n.prepareGetattr(name); errno != 0 {
 		return errno
 	}
 	if h, ok := handle.(fs.FileGetattrer); ok {
 		return h.Getattr(ctx, out)
 	}
-	parts, err := n.view.resolve(n.relativePath())
+	parts, err := n.view.resolve(name)
 	if err != nil {
 		return fs.ToErrno(err)
 	}
-	errno := n.getattr(ctx, parts, out)
-	if errno == 0 && parts[0].index == 0 && parts[0].info.Mode().IsRegular() && n.view.projectNamespace(n.relativePath()) && n.Operations() != nil {
+	errno := n.getattr(ctx, name, parts, out)
+	if errno == 0 && parts[0].index == 0 && parts[0].info.Mode().IsRegular() && n.view.projectNamespace(name) && n.Operations() != nil {
 		name, parent := n.Parent()
 		if parent != nil && n.view.cache.watch(parent.Operations().(*node), name) {
 			out.SetTimeout(metadataTimeout)
@@ -119,9 +100,9 @@ func (n *node) Getattr(ctx context.Context, handle fs.FileHandle, out *fuse.Attr
 	return errno
 }
 
-func (n *node) prepareGetattr() syscall.Errno {
+func (n *node) prepareGetattr(name string) syscall.Errno {
 	// Git inspects its metadata before loading exclusions and enumerating the worktree.
-	if n.relativePath() == "." || n.relativePath() == ".git" || n.relativePath() == ".git/info/exclude" {
+	if name == "." || name == ".git" || name == ".git/info/exclude" {
 		if err := n.view.refreshExclude(); err != nil {
 			log.Printf("refresh Git exclusions: %v", err)
 			return syscall.EIO
@@ -130,7 +111,7 @@ func (n *node) prepareGetattr() syscall.Errno {
 	return 0
 }
 
-func (n *node) getattr(ctx context.Context, parts []contribution, out *fuse.AttrOut) syscall.Errno {
+func (n *node) getattr(ctx context.Context, name string, parts []contribution, out *fuse.AttrOut) syscall.Errno {
 	if callerDependent(parts) && isGitCaller(ctx) {
 		if parts[0].index == 0 {
 			attributes(parts[0].info, out)
@@ -143,9 +124,9 @@ func (n *node) getattr(ctx context.Context, parts []contribution, out *fuse.Attr
 	if !info.Mode().IsRegular() {
 		return 0
 	}
-	rule := n.view.findMarkerRule(n.relativePath())
+	rule := n.view.findMarkerRule(name)
 	if rule != nil {
-		parts = n.view.document(n.relativePath(), parts)
+		parts = n.view.document(name, parts)
 	}
 	if len(parts) > 1 {
 		// A merged file stands for one file in each layer. Reporting them as
@@ -154,10 +135,10 @@ func (n *node) getattr(ctx context.Context, parts []contribution, out *fuse.Attr
 		out.Nlink = uint32(len(parts))
 		out.Size = uint64(mergedSize(parts))
 		if rule != nil {
-			if data, err := n.renderMarkedData(parts, rule); err == nil {
-				out.Size = uint64(len(data))
+			if size, err := n.markedSize(name, parts, rule); err == nil {
+				out.Size = uint64(size)
 			}
-		} else if notice, err := n.view.collisionNotice(n.relativePath(), parts); err == nil && notice != nil {
+		} else if notice, err := n.view.collisionNotice(name, parts); err == nil && notice != nil {
 			out.Size = uint64(len(notice))
 		}
 	}
@@ -167,7 +148,8 @@ func (n *node) getattr(ctx context.Context, parts []contribution, out *fuse.Attr
 func (n *node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	n.view.mu.Lock()
 	defer n.view.mu.Unlock()
-	parts, err := n.view.resolve(n.relativePath())
+	name := n.relativePath()
+	parts, err := n.view.resolve(name)
 	if err != nil {
 		return nil, 0, fs.ToErrno(err)
 	}
@@ -182,8 +164,8 @@ func (n *node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 	// through the kernel page cache, so descriptor semantics, including shared
 	// memory mappings, match the backing filesystem.
 	git := callerDependent(parts) && isGitCaller(ctx)
-	if !git && n.view.findMarkerRule(n.relativePath()) != nil {
-		parts = n.view.document(n.relativePath(), parts)
+	if !git && n.view.findMarkerRule(name) != nil {
+		parts = n.view.document(name, parts)
 	}
 	if len(parts) == 1 || git {
 		index := last.index
@@ -193,7 +175,7 @@ func (n *node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 			}
 			index = 0
 		}
-		f, err := n.view.layers[index].root.OpenFile(n.relativePath(), int(flags&^(syscall.O_APPEND|fuse.FMODE_EXEC)), 0)
+		f, err := n.view.layers[index].root.OpenFile(name, int(flags&^(syscall.O_APPEND|fuse.FMODE_EXEC)), 0)
 		if err != nil {
 			return nil, 0, fs.ToErrno(err)
 		}
@@ -203,11 +185,12 @@ func (n *node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 }
 
 func (n *node) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
-	parts, err := n.view.resolve(n.relativePath())
+	name := n.relativePath()
+	parts, err := n.view.resolve(name)
 	if err != nil {
 		return nil, fs.ToErrno(err)
 	}
-	target, err := n.view.layers[parts[len(parts)-1].index].root.Readlink(n.relativePath())
+	target, err := n.view.layers[parts[len(parts)-1].index].root.Readlink(name)
 	return []byte(target), fs.ToErrno(err)
 }
 

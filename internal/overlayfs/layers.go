@@ -44,6 +44,8 @@ type View struct {
 	// through this mount, each with the permissions that copy had.
 	vacated map[string]os.FileMode
 	cache   *metadataCache
+	sniffs  sniffCache
+	matches markerMatches
 }
 
 type identity struct {
@@ -267,6 +269,7 @@ func (v *View) Close() {
 	if v.cache != nil {
 		v.cache.close()
 	}
+	v.sniffs.close()
 	for _, layer := range v.layers {
 		if err := layer.root.Close(); err != nil {
 			log.Printf("close layer: %v", err)

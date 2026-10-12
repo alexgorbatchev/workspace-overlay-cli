@@ -20,6 +20,7 @@ import (
 const metadataTimeout = time.Second
 const metadataWatchLimit = 256
 const metadataEntryLimit = 1024
+const metadataAttributeLimit = 64
 
 // metadataFS implements per-result negative caching. go-fuse's inode bridge
 // only converts ENOENT to a negative entry when its global NegativeTimeout is
@@ -81,6 +82,7 @@ type metadataCache struct {
 	backings map[identity]*metadataDirectory
 	failed   bool
 	flush    chan struct{}
+	attrs    chan *fs.Inode
 	done     chan struct{}
 }
 
@@ -89,7 +91,7 @@ func newMetadataCache(v *View) (*metadataCache, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &metadataCache{view: v, watcher: w, dirs: make(map[*fs.Inode]*metadataDirectory), paths: make(map[string]*metadataDirectory), backings: make(map[identity]*metadataDirectory), flush: make(chan struct{}, 1), done: make(chan struct{})}
+	c := &metadataCache{view: v, watcher: w, dirs: make(map[*fs.Inode]*metadataDirectory), paths: make(map[string]*metadataDirectory), backings: make(map[identity]*metadataDirectory), flush: make(chan struct{}, 1), attrs: make(chan *fs.Inode, metadataAttributeLimit), done: make(chan struct{})}
 	go c.run()
 	return c, nil
 }
@@ -162,12 +164,28 @@ func (d *metadataDirectory) remember(name string) bool {
 }
 
 func (v *View) invalidateMetadata() {
+	v.sniffs.clear()
 	if v.cache == nil {
 		return
 	}
 	select {
 	case v.cache.flush <- struct{}{}:
 	default:
+	}
+}
+
+// Attribute mutations leave the inode's directory entries intact. Queue the
+// notification on the owned worker, outside the FUSE request and its locks.
+// A saturated queue falls back to a full flush rather than losing freshness.
+func (v *View) invalidateAttributes(n *fs.Inode) {
+	v.sniffs.clear()
+	if v.cache == nil {
+		return
+	}
+	select {
+	case v.cache.attrs <- n:
+	default:
+		v.invalidateMetadata()
 	}
 }
 
@@ -235,9 +253,17 @@ func (c *metadataCache) event(event fsnotify.Event) {
 	if dir != nil {
 		for _, n := range nodes {
 			c.notification(n.NotifyContent(-1, 0))
-			c.notifyEntry(n, path.Base(event.Name))
+			name := path.Base(event.Name)
+			if event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+				c.notifyEntry(n, name)
+			} else if child := n.GetChild(name); child != nil {
+				// Writes and permission changes preserve the directory entry.
+				// Refresh attributes without forcing another LOOKUP.
+				c.notification(child.NotifyContent(-1, 0))
+			}
 		}
 		if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+			c.view.sniffs.clear()
 			c.invalidateAll()
 		}
 	}
@@ -262,6 +288,8 @@ func (c *metadataCache) run() {
 			c.invalidateAll()
 		case <-c.flush:
 			c.invalidateAll()
+		case n := <-c.attrs:
+			c.notification(n.NotifyContent(-1, 0))
 		}
 	}
 }

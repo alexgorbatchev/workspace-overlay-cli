@@ -10,6 +10,7 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - Status: `just status [--project name]`
 - Test: `just test` (runs every package with `AGENT=0` and `AGENT=1`, each with the race detector and 90% coverage gate; always runs fresh, because a result replayed from the test cache carries coverage blocks of sources that have since changed); `go test -race -cover ./...` runs the tests without the gate. Mode-specific tests select `AGENT` explicitly instead of inheriting the invoking shell's mode.
 - Test local / E2E: `just test-local`
+- Benchmark FUSE operations: `go test ./internal/overlayfs -run '^$' -bench '^BenchmarkOperations/' -benchmem` (compares 27 core workloads on native files and real mounts; requires `/dev/fuse`). `BenchmarkMetadata` measures handlers without kernel dispatch; `BenchmarkConcurrentMetadata` measures parallel handlers with one hot file and a 128-file working set.
 - Lint: `just lint` (`go mod tidy -diff`, `go vet ./...`, and `golangci-lint run ./...`; CI pins golangci-lint 2.11.4)
 - CI: `.github/workflows/ci.yml` runs on pushes and pull requests to `main`: `go mod tidy -diff`, build, vet, `go test -race ./...`, and golangci-lint.
 - Release: push an annotated `vX.Y.Z` tag. `.github/workflows/release.yml` repeats the CI checks and then publishes Linux amd64 and arm64 archives through GoReleaser (`.goreleaser.yml`), which sets `main.version` to the tag’s version. Check a configuration change with `goreleaser check` and `goreleaser release --snapshot --clean`, and update the download URL in the README’s `# Installation` for the new version.
@@ -78,6 +79,7 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - For a real workspace use `just run overlay mount --config path/to/workspace-overlay.toml` instead of the fixture recipes.
 
 ## Boundaries
+- Always: preserve all existing functionality when optimizing performance.
 - Always: automatically record all new instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
 - Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% code coverage is required (scripts/ folder is excluded from this rule)
 - Always: keep `cmd/workspace-overlay/SKILL.md` synchronized in the same change as any CLI command, flag, default, environment, output, or side-effect change

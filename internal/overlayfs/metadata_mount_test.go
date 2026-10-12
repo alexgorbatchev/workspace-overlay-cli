@@ -36,9 +36,12 @@ func (c *countedMetadataFS) GetAttr(cancel <-chan struct{}, in *fuse.GetAttrIn, 
 	return c.RawFileSystem.GetAttr(cancel, in, out)
 }
 
-func mountedMetadata(t *testing.T, glob string) (*View, *node, *countedMetadataFS, string, string) {
+func mountedMetadata(t *testing.T, glob string, files ...string) (*View, *node, *countedMetadataFS, string, string) {
 	t.Helper()
 	project, source, target := t.TempDir(), t.TempDir(), t.TempDir()
+	for _, name := range files {
+		scratch.Write(t, filepath.Join(project, name), "base")
+	}
 	var v View
 	for i, dir := range []string{project, source} {
 		r, err := os.OpenRoot(dir)
@@ -78,6 +81,85 @@ func mountedMetadata(t *testing.T, glob string) (*View, *node, *countedMetadataF
 		t.Fatal(err)
 	}
 	return &v, root, raw, target, source
+}
+
+func TestMetadataContentEventsPreserveEntries(t *testing.T) {
+	for _, op := range []fsnotify.Op{fsnotify.Write, fsnotify.Chmod} {
+		t.Run(op.String(), func(t *testing.T) {
+			v, root, raw, target, _ := mountedMetadata(t, "notes/**", "file.txt")
+			name := filepath.Join(target, "file.txt")
+			if _, err := os.Stat(name); err != nil {
+				t.Fatal(err)
+			}
+			beforeLookup, beforeAttr := raw.lookups.Load(), raw.attrs.Load()
+			v.cache.mu.Lock()
+			watch := fmt.Sprintf("/proc/self/fd/%d/file.txt", v.cache.dirs[&root.Inode].file.Fd())
+			v.cache.mu.Unlock()
+			// Deliver the watch event directly so the kernel has processed the
+			// invalidation before the next stat, without a scheduling sleep.
+			v.cache.event(fsnotify.Event{Name: watch, Op: op})
+			if info, err := os.Stat(name); err != nil || info.Size() != 4 {
+				t.Fatalf("stat after event: %v %v", info, err)
+			}
+			if got := raw.lookups.Load() - beforeLookup; got != 0 {
+				t.Errorf("content event caused %d LOOKUPs, want 0", got)
+			}
+			if got := raw.attrs.Load() - beforeAttr; got != 1 {
+				t.Errorf("content event caused %d GETATTRs, want 1", got)
+			}
+		})
+	}
+}
+
+func TestMetadataMountedSetattrPreservesEntries(t *testing.T) {
+	_, _, raw, target, _ := mountedMetadata(t, "notes/**", "file.txt")
+	name := filepath.Join(target, "file.txt")
+	if _, err := os.Stat(name); err != nil {
+		t.Fatal(err)
+	}
+	before := raw.lookups.Load()
+	for i := range 20 {
+		mode := os.FileMode(0600 | i%2*0044)
+		if err := os.Chmod(name, mode); err != nil {
+			t.Fatal(err)
+		}
+		for range 20 {
+			if info, err := os.Stat(name); err != nil || info.Mode().Perm() != mode {
+				t.Fatalf("stat after chmod: %v %v, want mode=%o", info, err, mode)
+			}
+		}
+	}
+	if got := raw.lookups.Load() - before; got != 0 {
+		t.Errorf("chmod discarded the entry %d times, want 0", got)
+	}
+}
+
+func TestMetadataAttributeQueueSaturationFlushesEntries(t *testing.T) {
+	v, root, raw, target, _ := mountedMetadata(t, "notes/**", "file.txt")
+	name := filepath.Join(target, "file.txt")
+	if _, err := os.Stat(name); err != nil {
+		t.Fatal(err)
+	}
+	before := raw.lookups.Load()
+	func() {
+		v.cache.mu.Lock()
+		defer v.cache.mu.Unlock()
+		// The unbuffered error delivery parks the owned worker in disable,
+		// waiting for this lock. Fill the queue without a scheduling race.
+		v.cache.watcher.Errors <- fsnotify.ErrEventOverflow
+		for range metadataAttributeLimit + 1 {
+			v.invalidateAttributes(&root.Inode)
+		}
+		if len(v.cache.attrs) != metadataAttributeLimit || len(v.cache.flush) != 1 {
+			t.Fatalf("saturated attributes queue did not request a full flush: attrs=%d flush=%d", len(v.cache.attrs), len(v.cache.flush))
+		}
+	}()
+	awaitMetadata(t, func() bool {
+		if _, err := os.Stat(name); err != nil {
+			t.Fatal(err)
+		}
+		return raw.lookups.Load() > before
+	})
 }
 
 func TestMetadataKernelCaching(t *testing.T) {

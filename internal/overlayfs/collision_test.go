@@ -18,6 +18,52 @@ import (
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
 
+func TestTextCollisionReadBudget(t *testing.T) {
+	root, project, source, _ := setupTestRootNode(t)
+	scratch.Write(t, filepath.Join(project, "file.txt"), "project")
+	scratch.Write(t, filepath.Join(source, "file.txt"), "overlay")
+	parts, err := root.view.resolve("file.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	allocs := testing.AllocsPerRun(100, func() {
+		if notice, err := root.view.collisionNotice("file.txt", parts); err != nil || notice != nil {
+			t.Fatalf("text collision: %q, %v", notice, err)
+		}
+	})
+	if allocs > 5 {
+		t.Errorf("checking text copies allocated %.0f times, want <=5", allocs)
+	}
+}
+
+func TestCollisionChangesAreImmediatelyVisible(t *testing.T) {
+	root, project, source, _ := setupTestRootNode(t)
+	name := "file.txt"
+	scratch.Write(t, filepath.Join(project, name), "project")
+	sourceName := filepath.Join(source, name)
+	scratch.Write(t, sourceName, "overlay")
+	info, err := os.Stat(sourceName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := &node{view: root.view, path: name}
+	for _, data := range []string{"overlay", "\x00binary", "overlay"} {
+		scratch.Write(t, sourceName, data)
+		// Keep size and mtime unchanged: every read must inspect current bytes.
+		if err := os.Chtimes(sourceName, info.ModTime(), info.ModTime()); err != nil {
+			t.Fatal(err)
+		}
+		got := readCollisionNotice(t, child, syscall.O_RDONLY)
+		if data == "overlay" {
+			if got != "projectoverlay" {
+				t.Fatalf("text read = %q", got)
+			}
+		} else if !strings.Contains(got, "(overlay, binary)") {
+			t.Fatalf("binary read = %q", got)
+		}
+	}
+}
+
 // readCollisionNotice is a helper that opens, reads, and closes a file handle,
 // returning its content as a string.
 func readCollisionNotice(t *testing.T, child *node, flags uint32) string {

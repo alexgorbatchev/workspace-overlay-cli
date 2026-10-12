@@ -92,6 +92,11 @@ func TestBusyMountQuestion(t *testing.T) {
 				t.Fatalf("answer %q stops the processes = %v, want %v", tt.typed, got, tt.want)
 			}
 			shown := printed(t, keyboard, screen)
+			// Declining leaves the mount in place, so the way back is named.
+			const hint = "~/alpha stays mounted. Run `workspace-overlay overlay unmount` to be asked again."
+			if strings.Contains(shown, hint) == tt.want {
+				t.Errorf("answer %q: hint shown = %v, want it only after declining:\n%s", tt.typed, !tt.want, shown)
+			}
 			for _, want := range []string{
 				"~/alpha is in use and cannot be unmounted. These processes are using it:",
 				"PID", "COMMAND", "DIRECTORY",
@@ -127,6 +132,7 @@ func TestBusyMountTableFitsTheScreen(t *testing.T) {
 		t.Fatalf("table lost the process:\n%s", shown)
 	}
 	_, table, _ := strings.Cut(shown, "These processes are using it:\n")
+	table, _, _ = strings.Cut(table, "Stop these processes")
 	for line := range strings.Lines(table) {
 		if width := utf8.RuneCountInString(strings.TrimRight(line, "\n")); width > columns {
 			t.Errorf("line is %d columns wide on a %d-column screen: %q", width, columns, line)

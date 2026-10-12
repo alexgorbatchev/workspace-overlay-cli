@@ -43,7 +43,13 @@ func confirmStop(in io.Reader, out io.Writer) session.Confirm {
 		// An unreadable answer leaves line empty, which declines.
 		line, _ := answers.ReadString('\n')
 		answer := strings.ToLower(strings.TrimSpace(line))
-		return answer == "y" || answer == "yes"
+		if answer == "y" || answer == "yes" {
+			return true
+		}
+		// Nothing was changed. Whether the hint could be printed does not
+		// change the answer.
+		_, _ = fmt.Fprintf(out, "%s stays mounted. Run `workspace-overlay overlay unmount` to be asked again.\n", pathname.Display(target))
+		return false
 	}
 }
 

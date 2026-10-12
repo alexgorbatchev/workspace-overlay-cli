@@ -236,10 +236,25 @@ func (f *mergedFile) Write(ctx context.Context, data []byte, off int64) (uint32,
 func (f *mergedFile) Getattr(ctx context.Context, out *fuse.AttrOut) syscall.Errno {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.attributes(out)
+	return 0
+}
+
+func (f *mergedFile) pendingAttributes(out *fuse.AttrOut) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.dirty {
+		return false
+	}
+	f.attributes(out)
+	return true
+}
+
+// attributes reads the staged metadata while f.mu is held.
+func (f *mergedFile) attributes(out *fuse.AttrOut) {
 	out.Attr = f.attr
 	out.Size = uint64(len(f.data))
 	out.Nlink = uint32(len(f.parts))
-	return 0
 }
 
 func (f *mergedFile) commit() syscall.Errno {

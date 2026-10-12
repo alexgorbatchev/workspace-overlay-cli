@@ -251,14 +251,21 @@ func (c *metadataCache) event(event fsnotify.Event) {
 	}
 	c.mu.Unlock()
 	if dir != nil {
+		name := path.Base(event.Name)
 		for _, n := range nodes {
-			c.notification(n.NotifyContent(-1, 0))
-			name := path.Base(event.Name)
 			if event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+				c.notification(n.NotifyContent(-1, 0))
 				c.notifyEntry(n, name)
-			} else if child := n.GetChild(name); child != nil {
-				// Writes and permission changes preserve the directory entry.
-				// Refresh attributes without forcing another LOOKUP.
+				continue
+			}
+			child := n.GetChild(name)
+			if child == nil || child.Mode()&syscall.S_IFMT != syscall.S_IFREG {
+				continue
+			}
+			// Writes and permission changes preserve the directory entry.
+			// Only caller-invariant project files have cached attributes;
+			// directories and potential overlay paths have zero timeouts.
+			if c.view.projectNamespace(path.Join(n.Operations().(*node).relativePath(), name)) {
 				c.notification(child.NotifyContent(-1, 0))
 			}
 		}

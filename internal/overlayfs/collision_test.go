@@ -64,6 +64,50 @@ func TestCollisionChangesAreImmediatelyVisible(t *testing.T) {
 	}
 }
 
+func TestCollisionMetadataMatchesServedBytes(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		project bool
+		marked  bool
+	}{
+		{"unmarked", true, false},
+		{"marked project", true, true},
+		{"marked overlays only", false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root, project, shared, specific := setupTestRootNode(t)
+			if tt.marked {
+				root.view.SetMarkers(DefaultMarkerRules())
+			}
+			name := "file.md"
+			first := project
+			if !tt.project {
+				first = specific
+			}
+			scratch.Write(t, filepath.Join(first, name), "text\n")
+			scratch.Write(t, filepath.Join(shared, name), "\x00binary")
+			var entry fuse.EntryOut
+			inode, errno := root.Lookup(context.Background(), name, &entry)
+			if errno != 0 {
+				t.Fatal(errno)
+			}
+			root.AddChild(name, inode, true)
+			child := inode.Operations().(*node)
+			data := readCollisionNotice(t, child, syscall.O_RDONLY)
+			if !strings.Contains(data, "To resolve:") {
+				t.Fatalf("missing collision explanation: %q", data)
+			}
+			var attr fuse.AttrOut
+			if errno := child.Getattr(context.Background(), nil, &attr); errno != 0 {
+				t.Fatal(errno)
+			}
+			if entry.Size != uint64(len(data)) || attr.Size != uint64(len(data)) {
+				t.Errorf("lookup size=%d, stat size=%d, served bytes=%d", entry.Size, attr.Size, len(data))
+			}
+		})
+	}
+}
+
 // readCollisionNotice is a helper that opens, reads, and closes a file handle,
 // returning its content as a string.
 func readCollisionNotice(t *testing.T, child *node, flags uint32) string {
@@ -279,6 +323,13 @@ func TestEditorSaveCannotReplaceBinaryCollision(t *testing.T) {
 }
 
 func TestMountedBinaryCollisionReadsAsExplanation(t *testing.T) {
+	for _, name := range []string{"logo.png", "logo.md"} {
+		t.Run(name, func(t *testing.T) { testMountedBinaryCollision(t, name) })
+	}
+}
+
+func testMountedBinaryCollision(t *testing.T, name string) {
+	t.Helper()
 	root := t.TempDir()
 	project := filepath.Join(root, "project")
 	if err := os.Mkdir(project, 0755); err != nil {
@@ -286,12 +337,17 @@ func TestMountedBinaryCollisionReadsAsExplanation(t *testing.T) {
 	}
 	png := "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
 	binary := "\x00\x01\x02\x03binary"
-	scratch.Write(t, filepath.Join(project, "logo.png"), png)
+	scratch.Write(t, filepath.Join(project, name), png)
 	source := filepath.Join(root, "ai")
-	scratch.Write(t, filepath.Join(source, "logo.png"), binary)
-	_ = mountedProject(t, project, source)
+	scratch.Write(t, filepath.Join(source, name), binary)
+	v := mountedProject(t, project, source)
+	v.SetMarkers(DefaultMarkerRules())
 
-	mountedPath := filepath.Join(project, "logo.png")
+	mountedPath := filepath.Join(project, name)
+	before, err := os.Stat(mountedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(mountedPath)
 	if err != nil {
 		t.Fatalf("ReadFile through mount: %v", err)
@@ -305,8 +361,8 @@ func TestMountedBinaryCollisionReadsAsExplanation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat through mount: %v", err)
 	}
-	if info.Size() != int64(len(content)) {
-		t.Errorf("Stat size %d, want %d", info.Size(), len(content))
+	if before.Size() != int64(len(content)) || info.Size() != int64(len(content)) {
+		t.Errorf("Stat sizes before=%d after=%d, want %d", before.Size(), info.Size(), len(content))
 	}
 
 	// A truncating write is what a shell redirect does; it must be refused with a
@@ -318,7 +374,7 @@ func TestMountedBinaryCollisionReadsAsExplanation(t *testing.T) {
 		t.Fatalf("truncate of a binary collision: %v, want a permission error", err)
 	}
 
-	sourcePath := filepath.Join(source, "logo.png")
+	sourcePath := filepath.Join(source, name)
 	if sourceData := scratch.Read(t, sourcePath); string(sourceData) != binary {
 		t.Errorf("source file was modified: %q", string(sourceData))
 	}

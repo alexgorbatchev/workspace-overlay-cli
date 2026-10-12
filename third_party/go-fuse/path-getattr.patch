@@ -1,0 +1,19 @@
+diff --git a/fs/bridge.go b/fs/bridge.go
+index 65f9b13..53ae1b9 100644
+--- a/fs/bridge.go
++++ b/fs/bridge.go
+@@ -548,7 +548,13 @@ func (b *rawBridge) SetDebug(debug bool) {}
+ func (b *rawBridge) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse.AttrOut) fuse.Status {
+ 	n, fEntry := b.inode(input.NodeId, input.Fh())
+ 	f := fEntry.file
+-	if f == nil {
++	// A linked node with Getattr can answer path requests itself. Borrowing
++	// an arbitrary open file would conflate its descriptor-specific content
++	// with the requesting caller's path view. Unlinked inodes still need
++	// their open file when the kernel omits FUSE_GETATTR_FH for fstat.
++	_, hasGetattr := n.ops.(NodeGetattrer)
++	_, parent := n.Parent()
++	if f == nil && (!hasGetattr || parent == nil && !n.IsRoot()) {
+ 		// The linux kernel doesnt pass along the file
+ 		// descriptor, so we have to fake it here.
+ 		// See https://github.com/libfuse/libfuse/issues/62

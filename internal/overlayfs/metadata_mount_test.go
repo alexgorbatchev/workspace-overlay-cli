@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -92,12 +93,9 @@ func TestMetadataContentEventsPreserveEntries(t *testing.T) {
 				t.Fatal(err)
 			}
 			beforeLookup, beforeAttr := raw.lookups.Load(), raw.attrs.Load()
-			v.cache.mu.Lock()
-			watch := fmt.Sprintf("/proc/self/fd/%d/file.txt", v.cache.dirs[&root.Inode].file.Fd())
-			v.cache.mu.Unlock()
 			// Deliver the watch event directly so the kernel has processed the
 			// invalidation before the next stat, without a scheduling sleep.
-			v.cache.event(fsnotify.Event{Name: watch, Op: op})
+			v.cache.event(metadataEvent(v, root, "file.txt", op))
 			if info, err := os.Stat(name); err != nil || info.Size() != 4 {
 				t.Fatalf("stat after event: %v %v", info, err)
 			}
@@ -109,6 +107,43 @@ func TestMetadataContentEventsPreserveEntries(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMetadataContentNotificationBudget(t *testing.T) {
+	for _, tt := range []struct {
+		glob   string
+		budget float64
+	}{{"notes/**", 12}, {"**/*", 5}} {
+		t.Run(tt.glob, func(t *testing.T) {
+			v, root, raw, target, _ := mountedMetadata(t, tt.glob, "file.txt")
+			name := filepath.Join(target, "file.txt")
+			if _, err := os.Stat(name); err != nil {
+				t.Fatal(err)
+			}
+			event := metadataEvent(v, root, "file.txt", fsnotify.Write)
+			allocs := testing.AllocsPerRun(100, func() { v.cache.event(event) })
+			if allocs > tt.budget {
+				t.Errorf("content notification allocated %.0f times, want <=%.0f", allocs, tt.budget)
+			}
+			before := raw.lookups.Load()
+			if err := v.Project().WriteFile("file.txt", []byte("longer content"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			v.cache.event(event)
+			if info, err := os.Stat(name); err != nil || info.Size() != int64(len("longer content")) {
+				t.Fatalf("stat after write: %v %v", info, err)
+			}
+			if got := raw.lookups.Load() - before; got != 0 {
+				t.Errorf("content notification discarded the entry %d times", got)
+			}
+		})
+	}
+}
+
+func metadataEvent(v *View, root *node, name string, op fsnotify.Op) fsnotify.Event {
+	v.cache.mu.Lock()
+	defer v.cache.mu.Unlock()
+	return fsnotify.Event{Name: fmt.Sprintf("/proc/self/fd/%d/%s", v.cache.dirs[&root.Inode].file.Fd(), name), Op: op}
 }
 
 func TestMetadataMountedSetattrPreservesEntries(t *testing.T) {
@@ -368,10 +403,11 @@ func TestMetadataSourceTransitionKeepsAttributesUncached(t *testing.T) {
 }
 
 type metadataResult struct {
-	Caller  string
-	Size    int64
-	Data    string
-	Missing bool
+	Caller     string
+	Size       int64
+	HandleSize int64
+	Data       string
+	Missing    bool
 }
 
 func TestMetadataCallerHelper(t *testing.T) {
@@ -379,11 +415,28 @@ func TestMetadataCallerHelper(t *testing.T) {
 	if target == "" {
 		return
 	}
+	// FUSE identifies the calling thread. Keep its comm changes and file
+	// operations on that thread, even when the runtime would migrate us.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	var results []metadataResult
 	for _, caller := range []string{"editor", "git", "git-remote-http", "editor"} {
-		// proc_pid_comm(5) permits a thread to change another thread's comm
-		// in its thread group. Address the leader explicitly, as FUSE sends PID.
-		if err := os.WriteFile(fmt.Sprintf("/proc/%d/comm", os.Getpid()), []byte(caller), 0644); err != nil {
+		if err := os.WriteFile("/proc/thread-self/comm", []byte(caller), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// Keep earlier callers' handles alive. Path stats must not borrow
+		// their attributes, while fstat must retain its own descriptor view.
+		file, err := os.Open(filepath.Join(target, "merged.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := file.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+		handleInfo, err := file.Stat()
+		if err != nil {
 			t.Fatal(err)
 		}
 		info, err := os.Stat(filepath.Join(target, "merged.txt"))
@@ -398,7 +451,7 @@ func TestMetadataCallerHelper(t *testing.T) {
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Fatal(err)
 		}
-		results = append(results, metadataResult{caller, info.Size(), string(data), errors.Is(err, os.ErrNotExist)})
+		results = append(results, metadataResult{caller, info.Size(), handleInfo.Size(), string(data), errors.Is(err, os.ErrNotExist)})
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(results); err != nil {
 		t.Fatal(err)
@@ -417,6 +470,37 @@ func TestMetadataAlternatingKernelCallers(t *testing.T) {
 		t.Fatal(err)
 	}
 	verifyMetadataCallers(t, target)
+}
+
+func TestMetadataDescriptorStatAfterUnlink(t *testing.T) {
+	_, _, raw, target, _ := mountedMetadata(t, "**/*", "file.txt")
+	name := filepath.Join(target, "file.txt")
+	file, err := os.OpenFile(name, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := file.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := os.Remove(name); err != nil {
+		t.Fatal(err)
+	}
+	before := raw.attrs.Load()
+	if info, err := file.Stat(); err != nil || info.Size() != 4 {
+		t.Fatalf("descriptor stat after unlink: info=%v err=%v", info, err)
+	}
+	if raw.attrs.Load() <= before {
+		t.Fatal("descriptor stat did not reach the FUSE server")
+	}
+	data := []byte("extended content")
+	if _, err := file.WriteAt(data, 0); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := file.Stat(); err != nil || info.Size() != int64(len(data)) {
+		t.Fatalf("descriptor stat after unlinked write: info=%v err=%v", info, err)
+	}
 }
 
 func verifyMetadataCallers(t *testing.T, target string) {
@@ -442,7 +526,7 @@ func verifyMetadataCallers(t *testing.T, target string) {
 		if git {
 			want = "base"
 		}
-		if result.Data != want || result.Size != int64(len(want)) || result.Missing != git {
+		if result.Data != want || result.Size != int64(len(want)) || result.HandleSize != int64(len(want)) || result.Missing != git {
 			t.Errorf("caller-dependent view corrupted: %+v, want data=%s size=%d missing=%v", result, want, len(want), git)
 		}
 	}

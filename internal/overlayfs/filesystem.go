@@ -119,9 +119,22 @@ func (n *node) getattr(ctx context.Context, name string, parts []contribution, o
 		}
 		return syscall.ENOENT
 	}
+	// Path stats must see staged writes without borrowing an unrelated
+	// reader's snapshot. Git's project view was handled above.
+	for _, writer := range n.view.writers(name) {
+		if writer.pendingAttributes(out) {
+			return 0
+		}
+	}
 	info := parts[len(parts)-1].info
 	attributes(info, out)
 	if !info.Mode().IsRegular() {
+		return 0
+	}
+	// Classify the real copies before adding an empty project section. Open
+	// serves the collision explanation regardless of the file's marker rule.
+	if notice, err := n.view.collisionNotice(name, parts); err == nil && notice != nil {
+		out.Size = uint64(len(notice))
 		return 0
 	}
 	rule := n.view.findMarkerRule(name)
@@ -138,8 +151,6 @@ func (n *node) getattr(ctx context.Context, name string, parts []contribution, o
 			if size, err := n.markedSize(name, parts, rule); err == nil {
 				out.Size = uint64(size)
 			}
-		} else if notice, err := n.view.collisionNotice(name, parts); err == nil && notice != nil {
-			out.Size = uint64(len(notice))
 		}
 	}
 	return 0

@@ -32,10 +32,21 @@ func serveMount(t *testing.T, confirm Confirm) served {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := served{plan: mountPlan{target: target, view: view, confirm: confirm}, stop: cancel, result: make(chan error, 1)}
-	go func() { s.result <- serve(ctx, s.plan) }()
+	done := make(chan struct{})
+	go func() {
+		s.result <- serve(ctx, s.plan)
+		close(done)
+	}()
 	waitMount(t, target, overlayfs.FilesystemType)
 	t.Cleanup(func() {
 		cancel()
+		// Let the owner finish its unmount before attempting cleanup.
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			t.Error("the mount owner did not finish during cleanup")
+			return
+		}
 		// A test that left the mount busy has ended the process that used it.
 		if err := unmountOverlay(context.Background(), target, nil); err != nil {
 			t.Errorf("unmount %s after the test: %v", target, err)
@@ -65,8 +76,10 @@ type occupant struct {
 // occupy starts a process in dir. The process ends with the test.
 func occupy(t *testing.T, dir string) occupant {
 	t.Helper()
-	cmd := exec.Command("sleep", "60")
-	cmd.Dir = dir
+	// Cmd.Dir runs chdir before exec, while vfork suspends the parent's Go
+	// processor. A permission request on our own mount would then deadlock
+	// its server with GOMAXPROCS=1. Enter the mount after exec instead.
+	cmd := exec.Command("sh", "-c", `cd "$1" && exec sleep 60`, "sh", dir)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +92,20 @@ func occupy(t *testing.T, dir string) occupant {
 		_ = cmd.Process.Kill() // it may be gone already
 		<-o.exited
 	})
+	// Start returns before the shell enters the mount and execs sleep. Its
+	// actual command line proves both steps completed before an unmount.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", o.pid))
+		if err == nil && string(data) == "sleep\x0060\x00" {
+			return o
+		}
+		if !o.running() {
+			t.Fatal("the occupant exited before entering the mount")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("the occupant did not enter the mount")
 	return o
 }
 

@@ -25,9 +25,12 @@ run *args:
 run-ai *args:
     AGENT=1 go run ./cmd/workspace-overlay {{args}}
 
-test:
+test: (test-mode "0") (test-mode "1")
+
+[private]
+test-mode agent:
     @mkdir -p .tmp
-    go test -race -count=1 -coverpkg="$(go list ./... | awk '!/\/internal\/scratch$/' | paste -sd, -)" -coverprofile=.tmp/coverage.out ./...
+    AGENT={{agent}} go test -race -count=1 -coverpkg="$(go list ./... | awk '!/\/internal\/scratch$/' | paste -sd, -)" -coverprofile=.tmp/coverage.out ./...
     @go tool cover -func=.tmp/coverage.out | awk '/^total:/ { sub("%", "", $NF); printf "Coverage: %s%%\n", $NF; exit($NF < 90) }'
 
 lint:

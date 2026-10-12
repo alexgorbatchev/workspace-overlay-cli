@@ -11,27 +11,34 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestRuntimeErrorOmitsUsage(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	if err := run([]string{"overlay", "status", "--config", filepath.Join(t.TempDir(), "missing.toml")}, &stdout, &stderr); err == nil {
-		t.Fatal("missing configuration accepted")
-	}
-	if output := stdout.String() + stderr.String(); strings.Contains(output, "Usage:") {
-		t.Fatalf("failed operation printed usage: %q", output)
-	}
-}
-
-func TestCommandLineMistakeShowsUsage(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	if err := run([]string{"overlay", "status", "--no-such-flag"}, &stdout, &stderr); err == nil {
-		t.Fatal("unknown flag accepted")
-	}
-	if !strings.Contains(stderr.String(), "Usage:") {
-		t.Fatalf("mistyped command line printed no usage: %q", stderr.String())
-	}
-	// Usage after an error is a diagnostic: stdout stays clean for pipelines.
-	if stdout.Len() != 0 {
-		t.Fatalf("diagnostics leaked to stdout: %q", stdout.String())
+func TestCommandDiagnostics(t *testing.T) {
+	for _, mode := range []string{"0", "1"} {
+		t.Run("AGENT="+mode, func(t *testing.T) {
+			t.Setenv("AGENT", mode)
+			cases := []struct {
+				name  string
+				args  []string
+				usage bool
+			}{
+				{"runtime error", []string{"overlay", "status", "--config", filepath.Join(t.TempDir(), "missing.toml")}, false},
+				{"command line mistake", []string{"overlay", "status", "--no-such-flag"}, true},
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					var stdout, stderr bytes.Buffer
+					if err := run(tc.args, &stdout, &stderr); err == nil {
+						t.Fatal("invalid invocation accepted")
+					}
+					// Human output uses Usage:, agent output uses usage:.
+					if got := strings.Contains(strings.ToLower(stderr.String()), "usage:"); got != tc.usage {
+						t.Fatalf("usage shown = %v, want %v: %q", got, tc.usage, stderr.String())
+					}
+					if stdout.Len() != 0 {
+						t.Fatalf("diagnostics leaked to stdout: %q", stdout.String())
+					}
+				})
+			}
+		})
 	}
 }
 

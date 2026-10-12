@@ -56,6 +56,7 @@ func printed(t *testing.T, keyboard, screen *os.File) string {
 }
 
 func TestBusyMountQuestion(t *testing.T) {
+	t.Setenv("AGENT", "0")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	target := filepath.Join(home, "alpha")
@@ -107,9 +108,13 @@ func TestBusyMountQuestion(t *testing.T) {
 }
 
 func TestBusyMountTableFitsTheScreen(t *testing.T) {
+	t.Setenv("AGENT", "0")
 	const columns = 60
 	keyboard, screen := openTerminal(t, columns)
 	confirm := confirmStop(screen, screen)
+	if confirm == nil {
+		t.Fatal("no question for a person at a terminal")
+	}
 	if _, err := keyboard.WriteString("n\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +144,10 @@ func TestNoBusyMountQuestionWithoutAPerson(t *testing.T) {
 		in    io.Reader
 		out   io.Writer
 	}{
-		{"agent mode", "1", screen, screen},
+		{"agent mode 1", "1", screen, screen},
+		{"agent mode true", "true", screen, screen},
+		{"agent mode yes", "yes", screen, screen},
+		{"agent mode normalized", " TRUE ", screen, screen},
 		{"input is not a terminal", "", &buffer, screen},
 		{"output is not a terminal", "", screen, &buffer},
 	}

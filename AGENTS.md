@@ -8,7 +8,7 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - Dev: `just dev [--project name]` (shared fixtures in `dev-workspace`, all projects and worktrees by default)
 - Stop: `just stop [--project name]`
 - Status: `just status [--project name]`
-- Test: `just test` (race detector plus the 90% coverage gate; always runs every package fresh, because a result replayed from the test cache carries coverage blocks of sources that have since changed); `go test -race -cover ./...` runs the tests without the gate.
+- Test: `just test` (runs every package with `AGENT=0` and `AGENT=1`, each with the race detector and 90% coverage gate; always runs fresh, because a result replayed from the test cache carries coverage blocks of sources that have since changed); `go test -race -cover ./...` runs the tests without the gate. Mode-specific tests select `AGENT` explicitly instead of inheriting the invoking shell's mode.
 - Test local / E2E: `just test-local`
 - Lint: `just lint` (`go mod tidy -diff`, `go vet ./...`, and `golangci-lint run ./...`; CI pins golangci-lint 2.11.4)
 - CI: `.github/workflows/ci.yml` runs on pushes and pull requests to `main`: `go mod tidy -diff`, build, vet, `go test -race ./...`, and golangci-lint.

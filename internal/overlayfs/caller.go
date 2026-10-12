@@ -17,6 +17,10 @@ var readProcessComm = func(pid uint32) string {
 	return strings.TrimSpace(string(data))
 }
 
+func callerDependent(parts []contribution) bool {
+	return len(parts) != 1 || parts[0].index != 0
+}
+
 // isGitCaller reports whether the process making the FUSE filesystem call is Git.
 func isGitCaller(ctx context.Context) bool {
 	caller, ok := fuse.FromContext(ctx)

@@ -52,6 +52,7 @@ func (l *layer) includes(name string) bool {
 
 // RefreshPaths re-reads which overlay paths are visible and brings the Git exclusions up to date.
 func (v *View) RefreshPaths() error {
+	defer v.invalidateMetadata()
 	for i := range v.layers {
 		if err := v.layers[i].refreshPaths(); err != nil {
 			return err
@@ -78,6 +79,7 @@ func (v *View) overlays(name string) bool {
 // the given paths. A project change matters only where an overlay provides
 // the same path, because that decides whether Git must ignore it.
 func (v *View) changed(index int, names ...string) error {
+	defer v.invalidateMetadata()
 	if index > 0 {
 		return v.RefreshPaths()
 	}

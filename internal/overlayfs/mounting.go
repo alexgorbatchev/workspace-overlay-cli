@@ -27,14 +27,20 @@ func (v *View) Mount(target string) (*fuse.Server, error) {
 			FsName:  filesystemName,
 			Name:    filesystemName,
 		},
-		EntryTimeout:    &zero,
-		AttrTimeout:     &zero,
-		NegativeTimeout: &zero,
+		EntryTimeout: &zero,
+		AttrTimeout:  &zero,
 	}
 	// NewServer returns once the mount exists and its handshake with the
 	// kernel is done.
-	server, err := fuse.NewServer(fs.NewNodeFS(&node{view: v, path: "."}, opts), target, &opts.MountOptions)
+	cache, err := newMetadataCache(v)
 	if err != nil {
+		return nil, err
+	}
+	v.cache = cache
+	server, err := fuse.NewServer(&metadataFS{fs.NewNodeFS(&node{view: v, path: "."}, opts)}, target, &opts.MountOptions)
+	if err != nil {
+		cache.close()
+		v.cache = nil
 		return nil, err
 	}
 	go server.Serve()

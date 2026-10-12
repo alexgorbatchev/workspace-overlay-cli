@@ -43,6 +43,7 @@ type View struct {
 	// vacated holds the marked documents whose project copy was removed
 	// through this mount, each with the permissions that copy had.
 	vacated map[string]os.FileMode
+	cache   *metadataCache
 }
 
 type identity struct {
@@ -61,6 +62,10 @@ func (v *View) stable(name string) (fs.StableAttr, error) {
 		return fs.StableAttr{}, err
 	}
 	last := parts[len(parts)-1]
+	return v.stablePart(last), nil
+}
+
+func (v *View) stablePart(last contribution) fs.StableAttr {
 	stat := last.info.Sys().(*syscall.Stat_t)
 	key := fileIdentity(last.index, last.info)
 	v.idMu.Lock()
@@ -75,7 +80,7 @@ func (v *View) stable(name string) (fs.StableAttr, error) {
 		v.nextID++
 		v.identities[key] = id
 	}
-	return fs.StableAttr{Mode: stat.Mode, Ino: id}, nil
+	return fs.StableAttr{Mode: stat.Mode, Ino: id}
 }
 
 type contribution struct {
@@ -259,6 +264,9 @@ func (v *View) refreshExclude() error {
 
 // Close releases every layer's directory handle.
 func (v *View) Close() {
+	if v.cache != nil {
+		v.cache.close()
+	}
 	for _, layer := range v.layers {
 		if err := layer.root.Close(); err != nil {
 			log.Printf("close layer: %v", err)

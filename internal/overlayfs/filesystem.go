@@ -37,15 +37,31 @@ func attributes(info os.FileInfo, out *fuse.AttrOut) {
 
 func (n *node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	child := &node{view: n.view, path: path.Join(n.relativePath(), name)}
+	if errno := child.prepareGetattr(); errno != 0 {
+		return nil, errno
+	}
+	cacheable := n.view.cache.watch(n, name)
+	parts, err := n.view.resolve(child.path)
+	if err != nil {
+		if cacheable && errors.Is(err, os.ErrNotExist) && n.view.projectNamespace(child.path) {
+			out.SetEntryTimeout(metadataTimeout)
+		}
+		return nil, fs.ToErrno(err)
+	}
 	var attr fuse.AttrOut
-	if errno := child.Getattr(ctx, nil, &attr); errno != 0 {
+	if errno := child.getattr(ctx, parts, &attr); errno != 0 {
 		return nil, errno
 	}
 	out.Attr = attr.Attr
-	stable, err := n.view.stable(child.relativePath())
-	if err != nil {
-		return nil, fs.ToErrno(err)
+	// Both callers see an entry when the project contributes, even when
+	// its attributes differ. Overlay-only entries stay caller-dependent.
+	if cacheable && parts[0].index == 0 {
+		out.SetEntryTimeout(metadataTimeout)
+		if parts[0].info.Mode().IsRegular() && n.view.projectNamespace(child.path) {
+			out.SetAttrTimeout(metadataTimeout)
+		}
 	}
+	stable := n.view.stablePart(parts[len(parts)-1])
 	return n.NewInode(ctx, child, stable), 0
 }
 
@@ -83,12 +99,8 @@ func (n *node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 }
 
 func (n *node) Getattr(ctx context.Context, handle fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	// Git inspects its metadata before loading exclusions and enumerating the worktree.
-	if n.relativePath() == "." || n.relativePath() == ".git" || n.relativePath() == ".git/info/exclude" {
-		if err := n.view.refreshExclude(); err != nil {
-			log.Printf("refresh Git exclusions: %v", err)
-			return syscall.EIO
-		}
+	if errno := n.prepareGetattr(); errno != 0 {
+		return errno
 	}
 	if h, ok := handle.(fs.FileGetattrer); ok {
 		return h.Getattr(ctx, out)
@@ -97,7 +109,29 @@ func (n *node) Getattr(ctx context.Context, handle fs.FileHandle, out *fuse.Attr
 	if err != nil {
 		return fs.ToErrno(err)
 	}
-	if isGitCaller(ctx) {
+	errno := n.getattr(ctx, parts, out)
+	if errno == 0 && parts[0].index == 0 && parts[0].info.Mode().IsRegular() && n.view.projectNamespace(n.relativePath()) && n.Operations() != nil {
+		name, parent := n.Parent()
+		if parent != nil && n.view.cache.watch(parent.Operations().(*node), name) {
+			out.SetTimeout(metadataTimeout)
+		}
+	}
+	return errno
+}
+
+func (n *node) prepareGetattr() syscall.Errno {
+	// Git inspects its metadata before loading exclusions and enumerating the worktree.
+	if n.relativePath() == "." || n.relativePath() == ".git" || n.relativePath() == ".git/info/exclude" {
+		if err := n.view.refreshExclude(); err != nil {
+			log.Printf("refresh Git exclusions: %v", err)
+			return syscall.EIO
+		}
+	}
+	return 0
+}
+
+func (n *node) getattr(ctx context.Context, parts []contribution, out *fuse.AttrOut) syscall.Errno {
+	if callerDependent(parts) && isGitCaller(ctx) {
 		if parts[0].index == 0 {
 			attributes(parts[0].info, out)
 			return 0
@@ -147,12 +181,13 @@ func (n *node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 	// A file contributed by one layer needs no merging. Serve it natively and
 	// through the kernel page cache, so descriptor semantics, including shared
 	// memory mappings, match the backing filesystem.
-	if !isGitCaller(ctx) && n.view.findMarkerRule(n.relativePath()) != nil {
+	git := callerDependent(parts) && isGitCaller(ctx)
+	if !git && n.view.findMarkerRule(n.relativePath()) != nil {
 		parts = n.view.document(n.relativePath(), parts)
 	}
-	if len(parts) == 1 || isGitCaller(ctx) {
+	if len(parts) == 1 || git {
 		index := last.index
-		if isGitCaller(ctx) {
+		if git {
 			if parts[0].index != 0 {
 				return nil, 0, syscall.ENOENT
 			}

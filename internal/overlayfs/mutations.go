@@ -167,6 +167,7 @@ func (n *node) Rmdir(ctx context.Context, name string) syscall.Errno {
 }
 
 func (n *node) Setattr(ctx context.Context, handle fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
+	defer n.view.invalidateMetadata()
 	if h, ok := handle.(fs.FileSetattrer); ok {
 		return h.Setattr(ctx, in, out)
 	}

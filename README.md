@@ -47,7 +47,7 @@ Download the prebuilt Linux binary for your architecture from the [latest releas
 
 ```sh
 # Linux (x86-64)
-curl -sSL https://github.com/alexgorbatchev/workspace-overlay-cli/releases/download/v0.0.4/workspace-overlay_0.0.4_linux_amd64.tar.gz | tar -xz -C ~/.local/bin workspace-overlay
+curl -sSL https://github.com/alexgorbatchev/workspace-overlay-cli/releases/download/v0.0.5/workspace-overlay_0.0.5_linux_amd64.tar.gz | tar -xz -C ~/.local/bin workspace-overlay
 ```
 
 # Setup

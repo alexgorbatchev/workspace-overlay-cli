@@ -128,8 +128,7 @@ func runProject(ctx context.Context, selection Selection, targets []string) (res
 			mount.cancel()
 		}
 		for _, mount := range p.active {
-			<-mount.done
-			result = errors.Join(result, mount.err)
+			result = errors.Join(result, p.finish(mount))
 		}
 		if p.notify != nil {
 			result = errors.Join(result, p.notify.close())
@@ -169,7 +168,7 @@ func runProject(ctx context.Context, selection Selection, targets []string) (res
 	for _, plan := range plans {
 		p.start(group, plan)
 	}
-	plans = nil // The workers now own every backing handle.
+	plans = nil // Active mounts retain the handles until the session reaps them.
 	return p.loop(group)
 }
 
@@ -217,17 +216,25 @@ func (p *projectRunner) start(ctx context.Context, plan mountPlan) {
 	p.active[plan.target] = mount
 	go func() {
 		mount.err = serve(child, plan)
-		mount.err = errors.Join(mount.err, plan.view.Exclude().Close())
-		plan.view.Close()
-		if mount.err == nil {
-			mount.err = p.records.Forget(plan.target)
-		}
 		close(mount.done)
 		select {
 		case p.events <- mount:
 		case <-ctx.Done():
 		}
 	}()
+}
+
+// finish runs on the session owner: reconciliation can still use a completed
+// mount's backing handles until the owner removes it from the active set.
+func (p *projectRunner) finish(mount *runningMount) error {
+	<-mount.done
+	delete(p.active, mount.plan.target)
+	err := errors.Join(mount.err, mount.plan.view.Exclude().Close())
+	mount.plan.view.Close()
+	if err == nil {
+		err = p.records.Forget(mount.plan.target)
+	}
+	return err
 }
 
 // targets lists the project and its registered worktrees. This process
@@ -263,10 +270,8 @@ func (p *projectRunner) reconcile(ctx context.Context) error {
 	for target, mount := range p.active {
 		if !desired[target] {
 			mount.cancel()
-			<-mount.done
-			delete(p.active, target)
-			if mount.err != nil {
-				return mount.err
+			if err := p.finish(mount); err != nil {
+				return err
 			}
 			log.Printf("Unmounted unregistered worktree %s", pathname.Display(target))
 		} else if err := mount.plan.view.RefreshPaths(); err != nil {
@@ -360,9 +365,8 @@ func (p *projectRunner) loop(ctx context.Context) error {
 			if p.active[mount.plan.target] != mount {
 				continue
 			}
-			delete(p.active, mount.plan.target)
-			if mount.err != nil {
-				return mount.err
+			if err := p.finish(mount); err != nil {
+				return err
 			}
 			if mount.plan.target == p.selection.Target || len(p.active) == 0 {
 				return nil

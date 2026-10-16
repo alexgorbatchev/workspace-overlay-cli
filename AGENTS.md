@@ -57,6 +57,7 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - Generate live verification projects through `fixture create`; share embedded fixture data with integration tests and retain edits across restarts. Use mock names `alpha`, `beta`, and `workspace` in fixtures and examples.
 
 ## Gotchas
+- Mount workers report completion without closing backing handles. The session owner closes the view and Git exclusions when removing the completed mount from its active set; reconciliation can still use those handles before consuming completion.
 - Mount replacement: an active overlay requires `--replace` to unmount and remount cleanly; refusing to unmount non-overlay filesystems.
 - Worktrees share Git metadata: all backing and Git exclude handles are opened before mounting any target.
 - Worktrees use the original configured overlay sources; do not create per-worktree `.ai` symlinks.
@@ -87,6 +88,7 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 
 ## Boundaries
 - Always: apply the 5 GB storage limit to artifacts produced by your own work. Reuse shared build caches; their pre-existing contents do not count against that limit or block builds and tests.
+- Always: inspect relevant existing dependencies and native capabilities before adding dependencies or custom functionality. Keep library investigation and integration bounded to the authorized capability, and use supported interfaces.
 - Always: ground completion claims in checks executed for the relevant revision. Summarize verified results and limitations; reference existing logs or native CI results without creating evidence bundles or attaching raw transcripts.
 - Always: suspend only work that depends on unavailable context or access, preserving edits and verification state. Record the blocker, evidence, attempted recovery, and exact input needed; continue independent authorized work and recheck suspended work at task-selection boundaries. Pending checks are unfinished work, not blockers merely because they take time.
 - Always: reproduce pre-existing check failures on the untouched base before repairing a prerequisite. Limit repairs to the smallest same-repository change needed for required checks, record each as a separate ticket and change set, and apply the same verification, review, and integration gates. Preserve unrelated and unowned changes.

@@ -3,14 +3,17 @@ package session
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/config"
+	"github.com/alexgorbatchev/workspace-overlay-cli/internal/overlayfs"
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/registry"
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/scratch"
 )
@@ -60,6 +63,48 @@ func TestProjectWatcherClosure(t *testing.T) {
 	}
 	if err := p.loop(context.Background()); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("closed watcher: %v", err)
+	}
+}
+
+func TestReconcileBeforeMountCompletionIsConsumed(t *testing.T) {
+	p, _ := testProjectRunner(t)
+	p.selection.Worktrees = true
+	p.selection.Sources = []config.Source{{Name: "shared", Path: scratch.Mkdir(t, filepath.Join(p.selection.Root, "source")), Glob: "**/*"}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	plan, err := preparePlan(ctx, p.selection, p.selection.Target, nil, p.records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.start(ctx, plan)
+	mount := p.active[plan.target]
+	t.Cleanup(func() {
+		cancel()
+		<-mount.done
+		if _, err := plan.view.Project().Lstat("."); !errors.Is(err, os.ErrClosed) {
+			if err := plan.discard(p.records); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	waitMount(t, plan.target, overlayfs.FilesystemType)
+	if err := unmountOverlay(context.Background(), plan.target, nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-mount.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("unmounted worker did not finish")
+	}
+	// A watcher event can win the select before the mount completion event.
+	if err := p.reconcile(ctx); err != nil {
+		t.Fatalf("reconcile before consuming completion: %v", err)
+	}
+	if err := p.loop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plan.view.Project().Lstat("."); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("backing after consuming completion: %v; want closed", err)
 	}
 }
 

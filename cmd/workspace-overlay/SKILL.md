@@ -4,9 +4,11 @@ description: Use when mounting, inspecting, or stopping workspace-overlay and ed
 author: alexgorbatchev
 metadata:
   created_on: 2026-10-06 16:00
-  last_modified: 2026-10-16 20:46
+  last_modified: 2026-10-16 21:24
   status: current
 ---
+
+After externally unmounting a worktree, let the session finish removing its managed exclusions and backing handles; other mounts continue running while the worktree remains suppressed until re-registration.
 
 Run `workspace-overlay overlay mount` in a directory with `workspace-overlay.toml` in its ancestry, or supply `--config path/to/workspace-overlay.toml`. Require Linux with accessible `/dev/fuse`, and the `git`, `findmnt`, and `fusermount3` commands on `PATH`; `fuser` (psmisc) on `PATH` names the processes that keep a mount busy.
 

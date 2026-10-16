@@ -142,6 +142,46 @@ end = "=== END {name} ==="
 
 Per-overlay `collision` and `write` fields override `[defaults]`. The supported values are `concat` and `most-specific`, respectively. Unknown TOML fields, invalid patterns, overlapping mount targets, and sources inside mount targets are rejected.
 
+## Overlay scope and performance
+
+Restrict each overlay's `glob` to the paths it needs to supply. The default `**/*` allows future overlay contributions anywhere, even when the source currently contains only `AGENTS.md` and skills. This prevents attribute caching and failed-lookup caching for ordinary project paths: Git sees the backing project, other callers see the merged view, and the kernel shares these caches across callers.
+
+Every overlay applied to a project must exclude a path and its descendants before that path qualifies for attribute caching. With overlays limited to `AGENTS.md` and `.agents/**`, unrelated directories such as `src/` and `node_modules/` qualify when their backing directories are watched. The mount root remains uncached for attributes because it can contain overlay entries. Broad globs still benefit from project-backed entry caching, unchanged project-file data caching, and directory enumeration that avoids eagerly fetching every child's attributes.
+
+If the sources contain only root-level `AGENTS.md` and files under `.agents/`, replace the broad overlay blocks with separate entries sharing each source. Keep the existing project definitions and put workspace contributions before project contributions:
+
+```toml
+[[overlays]]
+name = "workspace"
+source = ".ai/workspace"
+projects = ["*"]
+glob = "AGENTS.md"
+
+[[overlays]]
+name = "workspace-skills"
+source = ".ai/workspace"
+projects = ["*"]
+glob = ".agents/**"
+
+[[overlays]]
+name = "alpha"
+source = ".ai/alpha"
+projects = ["alpha"]
+glob = "AGENTS.md"
+
+[[overlays]]
+name = "alpha-skills"
+source = ".ai/alpha"
+projects = ["alpha"]
+glob = ".agents/**"
+```
+
+Apply the same split to any other project overlay. Each entry needs a unique name; retaining the original name for `AGENTS.md` preserves its section labels. Marked files supplied by the added entries use their new names.
+
+Use separate entries for these two scopes. A brace pattern such as `glob = "{AGENTS.md,.agents/**}"` selects the files correctly, but the current cache eligibility check cannot prove unrelated paths safe when brace alternatives contain `/`, so it leaves their attributes and failed lookups uncached.
+
+Inspect the source contents before narrowing the globs. Files outside the selected scopes are excluded, including future additions; extend the configuration when another overlay path is needed. Apply configuration changes by stopping and mounting again, or with `workspace-overlay overlay mount --replace` using the same configuration and project selection.
+
 # Limitations
 
 The runtime requires Linux. Directory moves across layers, hard links to merged files, rename flags, special-file creation, and native extended attributes are unsupported. Open merged files retain their original snapshots; reopen them to read updated source contributions. Merged files are held in memory and limited to 64 MiB total.

@@ -11,24 +11,35 @@ import (
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/logged"
 )
 
-type metadataEntry struct {
-	parent *fs.Inode
-	name   string
+type metadataInvalidation struct {
+	inode *fs.Inode
+	name  string // Empty invalidates the inode's attributes, otherwise its named entry.
 }
 
 // Data pages outlive entry TTLs. Include live cached inodes even after their
 // names have expired from the bounded metadata bookkeeping.
-func cachedEntries(n *fs.Inode, dir *metadataDirectory) []metadataEntry {
-	entries := make([]metadataEntry, 0, len(dir.entries))
+func cachedInvalidations(n *fs.Inode, dir *metadataDirectory) []metadataInvalidation {
+	entries := make([]metadataInvalidation, 0, len(dir.entries)+1)
+	entries = append(entries, metadataInvalidation{inode: n})
 	for name := range dir.entries {
-		entries = append(entries, metadataEntry{n, name})
+		entries = append(entries, metadataInvalidation{n, name})
 	}
 	for name, child := range n.Children() {
 		if _, tracked := dir.entries[name]; !tracked && child.Operations().(*node).dataCached.Load() {
-			entries = append(entries, metadataEntry{n, name})
+			entries = append(entries, metadataInvalidation{n, name})
 		}
 	}
 	return entries
+}
+
+func (c *metadataCache) invalidate(entries []metadataInvalidation) {
+	for _, entry := range entries {
+		if entry.name == "" {
+			c.notification(entry.inode.NotifyContent(-1, 0))
+		} else {
+			c.notifyEntry(entry.inode, entry.name)
+		}
+	}
 }
 
 // invalidatePaths runs on the owned worker, outside filesystem request locks.
@@ -36,22 +47,20 @@ func cachedEntries(n *fs.Inode, dir *metadataDirectory) []metadataEntry {
 // parent entry; sibling directories retain their cached entries and pages.
 func (c *metadataCache) invalidatePaths(names []string) {
 	c.mu.Lock()
-	var entries []metadataEntry
+	var entries []metadataInvalidation
 	for n, dir := range c.dirs {
 		parent := n.Operations().(*node).relativePath()
 		for _, name := range names {
 			if parent == path.Dir(name) {
-				entries = append(entries, metadataEntry{n, path.Base(name)})
+				entries = append(entries, metadataInvalidation{inode: n}, metadataInvalidation{n, path.Base(name)})
 			}
 			if parent == name || strings.HasPrefix(parent, name+"/") {
-				entries = append(entries, cachedEntries(n, dir)...)
+				entries = append(entries, cachedInvalidations(n, dir)...)
 			}
 		}
 	}
 	c.mu.Unlock()
-	for _, entry := range entries {
-		c.notifyEntry(entry.parent, entry.name)
-	}
+	c.invalidate(entries)
 }
 
 // evictOldest recycles watch capacity instead of permanently excluding every
@@ -79,16 +88,14 @@ func (c *metadataCache) evictOldest() {
 		return
 	}
 	oldest.dead = true
-	var entries []metadataEntry
+	var entries []metadataInvalidation
 	for n := range oldest.nodes {
 		delete(c.dirs, n)
-		entries = append(entries, cachedEntries(n, oldest)...)
+		entries = append(entries, cachedInvalidations(n, oldest)...)
 	}
 	delete(c.paths, oldest.name)
 	delete(c.backings, oldest.key)
 	c.mu.Unlock()
-	for _, entry := range entries {
-		c.notifyEntry(entry.parent, entry.name)
-	}
+	c.invalidate(entries)
 	logged.Close(oldest.file)
 }

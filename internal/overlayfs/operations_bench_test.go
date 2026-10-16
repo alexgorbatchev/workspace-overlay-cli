@@ -18,7 +18,7 @@ import (
 func BenchmarkOperations(b *testing.B) {
 	for _, backend := range []string{"native", "fuse", "fuse-restricted"} {
 		for _, operation := range []string{
-			"stat_project", "stat_merged", "stat_marked", "negative_lookup", "readdir", "readdir_stat",
+			"stat_project", "stat_merged", "stat_marked", "stat_deep", "negative_lookup", "readdir", "readdir_stat",
 			"read_project", "read_merged", "read_marked", "read_large",
 			"write_project", "write_merged", "create_remove", "mkdir_remove",
 			"rename", "chmod", "truncate", "readlink", "symlink_remove", "link_remove", "statfs",
@@ -49,6 +49,9 @@ func BenchmarkOperations(b *testing.B) {
 						}
 						return fmt.Errorf("missing lookup: %v", err)
 					}
+				case "stat_deep":
+					name := filepath.Join(dir, "deep/a/b/c/d/e/file.txt")
+					op = func() error { _, err := os.Stat(name); return err }
 				case "readdir":
 					name := filepath.Join(dir, "directory")
 					op = func() error { _, err := os.ReadDir(name); return err }
@@ -165,6 +168,7 @@ func benchmarkWorkspace(b *testing.B, backend string) string {
 		scratch.Write(b, filepath.Join(project, name), data)
 	}
 	scratch.Write(b, filepath.Join(project, "large.txt"), strings.Repeat("a", 1<<20))
+	scratch.Write(b, filepath.Join(project, "deep/a/b/c/d/e/file.txt"), data)
 	for i := range 128 {
 		scratch.Write(b, filepath.Join(project, "directory", fmt.Sprintf("file-%03d.txt", i)), data)
 	}

@@ -110,6 +110,7 @@ func newMetadataCache(v *View) (*metadataCache, error) {
 	return c, nil
 }
 
+// An empty entry requests coverage for the directory's own attributes only.
 func (c *metadataCache) watch(n *node, entry string) bool {
 	if c == nil || n.Operations() == nil {
 		return false
@@ -165,6 +166,9 @@ func (c *metadataCache) watch(n *node, entry string) bool {
 // remember also records misses, which have no child inode to enumerate when
 // RefreshPaths or a mutation flushes the cache.
 func (d *metadataDirectory) remember(name string) bool {
+	if name == "" {
+		return true
+	}
 	now := time.Now()
 	if _, ok := d.entries[name]; ok {
 		d.entries[name] = now.Add(metadataTimeout)
@@ -248,14 +252,12 @@ func (c *metadataCache) disable(err error) {
 
 func (c *metadataCache) invalidateAll() {
 	c.mu.Lock()
-	var entries []metadataEntry
+	var entries []metadataInvalidation
 	for n, dir := range c.dirs {
-		entries = append(entries, cachedEntries(n, dir)...)
+		entries = append(entries, cachedInvalidations(n, dir)...)
 	}
 	c.mu.Unlock()
-	for _, entry := range entries {
-		c.notifyEntry(entry.parent, entry.name)
-	}
+	c.invalidate(entries)
 }
 
 func (c *metadataCache) event(event fsnotify.Event) {
@@ -279,6 +281,10 @@ func (c *metadataCache) event(event fsnotify.Event) {
 	if dir != nil {
 		name := path.Base(event.Name)
 		for _, n := range nodes {
+			if event.Name == dir.name {
+				c.notification(n.NotifyContent(-1, 0))
+				continue
+			}
 			if event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
 				c.notification(n.NotifyContent(-1, 0))
 				c.notifyEntry(n, name)

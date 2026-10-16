@@ -89,18 +89,34 @@ func (n *node) Getattr(ctx context.Context, handle fs.FileHandle, out *fuse.Attr
 	if h, ok := handle.(fs.FileGetattrer); ok {
 		return h.Getattr(ctx, out)
 	}
+	// Arm the watch before reading attributes so changes during acquisition
+	// cannot leave an already-stale result cached without a notification.
+	cacheable := n.watchAttributes(name)
 	parts, err := n.view.resolve(name)
 	if err != nil {
 		return fs.ToErrno(err)
 	}
 	errno := n.getattr(ctx, name, parts, out)
-	if errno == 0 && parts[0].index == 0 && parts[0].info.Mode().IsRegular() && n.view.projectNamespace(name) && n.Operations() != nil {
-		name, parent := n.Parent()
-		if parent != nil && n.view.cache.watch(parent.Operations().(*node), name) {
-			out.SetTimeout(metadataTimeout)
-		}
+	if errno == 0 && cacheable && parts[0].index == 0 && out.Mode&syscall.S_IFMT == n.Mode() {
+		out.SetTimeout(metadataTimeout)
 	}
 	return errno
+}
+
+func (n *node) watchAttributes(name string) bool {
+	if n.Operations() == nil || !n.view.projectNamespace(name) {
+		return false
+	}
+	if n.IsDir() {
+		// A parent watch misses changes inside this directory that alter its
+		// size, timestamps and link count. Watch the directory itself.
+		return n.view.cache.watch(n, "")
+	}
+	if n.Mode()&syscall.S_IFMT != syscall.S_IFREG {
+		return false
+	}
+	entry, parent := n.Parent()
+	return parent != nil && n.view.cache.watch(parent.Operations().(*node), entry)
 }
 
 func (n *node) prepareGetattr(name string) syscall.Errno {

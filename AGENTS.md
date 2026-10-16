@@ -87,6 +87,7 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - For a real workspace use `just run overlay mount --config path/to/workspace-overlay.toml` instead of the fixture recipes.
 
 ## Boundaries
+- Always: use meaningful red/green tests for executable behavior changes. Check sensitivity with implementation disabled and tests enabled in an owned isolated or disposable worktree, verify the expected failure, restore the final implementation, and rerun relevant checks. Preserve other actors' changes. For non-executable changes, run applicable validators rather than manufacturing static-value tests.
 - Always: apply the 5 GB storage limit to artifacts produced by your own work. Reuse shared build caches; their pre-existing contents do not count against that limit or block builds and tests.
 - Always: inspect relevant existing dependencies and native capabilities before adding dependencies or custom functionality. Keep library investigation and integration bounded to the authorized capability, and use supported interfaces.
 - Always: ground completion claims in checks executed for the relevant revision. Summarize verified results and limitations; reference existing logs or native CI results without creating evidence bundles or attaching raw transcripts.

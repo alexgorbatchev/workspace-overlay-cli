@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/fsnotify/fsnotify"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -35,9 +36,10 @@ func (m *metadataFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name 
 	return status
 }
 
-// projectNamespace proves overlays cannot ever contribute at name. The
-// literal prefix is a conservative bound, not a second glob implementation:
-// uncertain patterns (including escapes) keep the whole namespace uncached.
+// projectNamespace proves overlays cannot ever contribute at name, including
+// as an ancestor directory of a future match. Match each component prefix
+// with the same glob engine used to discover contributions. An incomplete
+// alternative or escaped separator is uncertain and stays uncached.
 func (v *View) projectNamespace(name string) bool {
 	if gitMetadata(name) {
 		return true
@@ -46,18 +48,20 @@ func (v *View) projectNamespace(name string) bool {
 		if layer.rules == nil {
 			return false
 		}
-		glob := layer.rules.glob
-		if i := strings.IndexAny(glob, "*?[{\\"); i >= 0 {
-			glob = glob[:i]
-			if i := strings.LastIndexByte(glob, '/'); i >= 0 {
-				glob = glob[:i]
-			} else {
+		if name == "." || strings.ContainsRune(layer.rules.glob, '\\') {
+			return false
+		}
+		for glob := layer.rules.glob; ; glob = path.Dir(glob) {
+			matched, err := doublestar.Match(glob, name)
+			if matched || err != nil || glob == "." {
 				return false
 			}
-		}
-		glob = path.Clean(glob)
-		if name == "." || glob == "." || name == glob || strings.HasPrefix(name, glob+"/") || strings.HasPrefix(glob, name+"/") {
-			return false
+			if !strings.ContainsRune(glob, '/') {
+				break
+			}
+			if path.Dir(glob) == glob {
+				return false
+			}
 		}
 	}
 	return true
@@ -65,6 +69,9 @@ func (v *View) projectNamespace(name string) bool {
 
 type metadataDirectory struct {
 	file    *os.File
+	key     identity
+	name    string
+	used    time.Time
 	nodes   map[*fs.Inode]bool
 	dead    bool
 	entries map[string]time.Time
@@ -74,16 +81,22 @@ type metadataDirectory struct {
 // the mounted project. The cap bounds both descriptors and inotify watches;
 // directories beyond it retain zero timeouts. Close joins the owned worker.
 type metadataCache struct {
-	view     *View
-	watcher  *fsnotify.Watcher
-	mu       sync.Mutex
-	dirs     map[*fs.Inode]*metadataDirectory
-	paths    map[string]*metadataDirectory
-	backings map[identity]*metadataDirectory
-	failed   bool
-	flush    chan struct{}
-	attrs    chan *fs.Inode
-	done     chan struct{}
+	view      *View
+	watcher   *fsnotify.Watcher
+	mu        sync.Mutex
+	dirs      map[*fs.Inode]*metadataDirectory
+	paths     map[string]*metadataDirectory
+	backings  map[identity]*metadataDirectory
+	failed    bool
+	inbox     metadataInbox
+	wake      chan struct{}
+	stop      chan struct{}
+	collected chan struct{}
+	flush     chan struct{}
+	attrs     chan *fs.Inode
+	changes   chan []string
+	evict     chan struct{}
+	done      chan struct{}
 }
 
 func newMetadataCache(v *View) (*metadataCache, error) {
@@ -91,7 +104,8 @@ func newMetadataCache(v *View) (*metadataCache, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &metadataCache{view: v, watcher: w, dirs: make(map[*fs.Inode]*metadataDirectory), paths: make(map[string]*metadataDirectory), backings: make(map[identity]*metadataDirectory), flush: make(chan struct{}, 1), attrs: make(chan *fs.Inode, metadataAttributeLimit), done: make(chan struct{})}
+	c := &metadataCache{view: v, watcher: w, dirs: make(map[*fs.Inode]*metadataDirectory), paths: make(map[string]*metadataDirectory), backings: make(map[identity]*metadataDirectory), flush: make(chan struct{}, 1), attrs: make(chan *fs.Inode, metadataAttributeLimit), changes: make(chan []string, metadataAttributeLimit), evict: make(chan struct{}, 1), wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
+	c.collected = c.collect(w)
 	go c.run()
 	return c, nil
 }
@@ -102,14 +116,12 @@ func (c *metadataCache) watch(n *node, entry string) bool {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.failed {
+	if c.failed || c.inbox.paused.Load() {
 		return false
 	}
 	if dir := c.dirs[&n.Inode]; dir != nil {
+		dir.used = time.Now()
 		return !dir.dead && dir.remember(entry)
-	}
-	if len(c.dirs) >= metadataWatchLimit {
-		return false
 	}
 	f, err := c.view.layers[0].root.Open(n.relativePath())
 	if err != nil {
@@ -127,14 +139,23 @@ func (c *metadataCache) watch(n *node, entry string) bool {
 		logged.Close(f)
 		dir.nodes[&n.Inode] = true
 		c.dirs[&n.Inode] = dir
+		dir.used = time.Now()
 		return !dir.dead && dir.remember(entry)
+	}
+	if len(c.backings) >= metadataWatchLimit {
+		logged.Close(f)
+		select {
+		case c.evict <- struct{}{}:
+		default:
+		}
+		return false
 	}
 	name := fmt.Sprintf("/proc/self/fd/%d", f.Fd())
 	if err := c.watcher.Add(name); err != nil {
 		logged.Close(f)
 		return false
 	}
-	dir := &metadataDirectory{file: f, nodes: map[*fs.Inode]bool{&n.Inode: true}, entries: make(map[string]time.Time)}
+	dir := &metadataDirectory{file: f, key: key, name: name, used: time.Now(), nodes: map[*fs.Inode]bool{&n.Inode: true}, entries: make(map[string]time.Time)}
 	c.dirs[&n.Inode] = dir
 	c.paths[name] = dir
 	c.backings[key] = dir
@@ -174,6 +195,18 @@ func (v *View) invalidateMetadata() {
 	}
 }
 
+func (v *View) invalidatePaths(names ...string) {
+	v.sniffs.clear()
+	if v.cache == nil || len(names) == 0 {
+		return
+	}
+	select {
+	case v.cache.changes <- names:
+	default:
+		v.invalidateMetadata()
+	}
+}
+
 // Attribute mutations leave the inode's directory entries intact. Queue the
 // notification on the owned worker, outside the FUSE request and its locks.
 // A saturated queue falls back to a full flush rather than losing freshness.
@@ -191,8 +224,7 @@ func (v *View) invalidateAttributes(n *fs.Inode) {
 
 func (c *metadataCache) notifyEntry(n *fs.Inode, name string) {
 	if child := n.GetChild(name); child != nil {
-		// Negative offset invalidates attributes without flushing file data.
-		c.notification(child.NotifyContent(-1, 0))
+		c.notification(child.NotifyContent(0, 0))
 	}
 	c.notification(n.NotifyEntry(name))
 }
@@ -216,15 +248,9 @@ func (c *metadataCache) disable(err error) {
 
 func (c *metadataCache) invalidateAll() {
 	c.mu.Lock()
-	type entry struct {
-		parent *fs.Inode
-		name   string
-	}
-	var entries []entry
+	var entries []metadataEntry
 	for n, dir := range c.dirs {
-		for name := range dir.entries {
-			entries = append(entries, entry{n, name})
-		}
+		entries = append(entries, cachedEntries(n, dir)...)
 	}
 	c.mu.Unlock()
 	for _, entry := range entries {
@@ -263,49 +289,61 @@ func (c *metadataCache) event(event fsnotify.Event) {
 				continue
 			}
 			// Writes and permission changes preserve the directory entry.
-			// Only caller-invariant project files have cached attributes;
-			// directories and potential overlay paths have zero timeouts.
-			if c.view.projectNamespace(path.Join(n.Operations().(*node).relativePath(), name)) {
-				c.notification(child.NotifyContent(-1, 0))
+			// Potential overlay paths retain zero attribute timeouts, but a
+			// project-only open may have populated their data pages.
+			if child.Operations().(*node).dataCached.Load() || c.view.projectNamespace(path.Join(n.Operations().(*node).relativePath(), name)) {
+				offset := int64(-1) // chmod preserves cached data.
+				if event.Has(fsnotify.Write) {
+					offset = 0
+				}
+				c.notification(child.NotifyContent(offset, 0))
 			}
 		}
 		if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
 			c.view.sniffs.clear()
-			c.invalidateAll()
+			// Only descendants of a moved directory lose path coverage.
+			for _, n := range nodes {
+				name := n.Operations().(*node).relativePath()
+				if event.Name != dir.name {
+					name = path.Join(name, path.Base(event.Name))
+				}
+				c.invalidatePaths([]string{name})
+			}
 		}
 	}
 }
 
 func (c *metadataCache) run() {
 	defer close(c.done)
+	defer c.stopCollector()
 	for {
 		select {
-		case event, ok := <-c.watcher.Events:
-			if !ok {
-				return
-			}
-			c.event(event)
-		case err, ok := <-c.watcher.Errors:
-			if !ok {
-				return
-			}
-			// Overflow or a broken watcher removes the freshness guarantee.
-			// Stop issuing TTLs and invalidate everything already published.
-			c.disable(err)
-			c.invalidateAll()
+		case <-c.stop:
+			return
+		case <-c.wake:
+			c.processEvents()
 		case <-c.flush:
 			c.invalidateAll()
 		case n := <-c.attrs:
 			c.notification(n.NotifyContent(-1, 0))
+		case names := <-c.changes:
+			c.invalidatePaths(names)
+		case <-c.evict:
+			c.evictOldest()
 		}
 	}
 }
 
 func (c *metadataCache) close() {
-	if err := c.watcher.Close(); err != nil {
-		log.Printf("close metadata watcher: %v", err)
-	}
+	// Requests can still finish while a busy mount is being released. Stop
+	// watch acquisition under its lock before joining the notification worker.
+	c.mu.Lock()
+	c.failed = true
+	c.mu.Unlock()
+	close(c.stop)
 	<-c.done
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for _, dir := range c.paths {
 		logged.Close(dir.file)
 	}

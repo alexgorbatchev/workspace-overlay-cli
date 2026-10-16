@@ -49,7 +49,7 @@ func (n *node) Create(ctx context.Context, name string, flags, mode uint32, out 
 		}
 		n.view.remember(index, info)
 	}
-	h := fs.NewLoopbackFileFromOS(f)
+	h, _ := child.nativeOpen(f, index, child.relativePath(), flags)
 	if err := n.view.changed(index, child.relativePath()); err != nil {
 		logged.Close(f)
 		return nil, nil, 0, fs.ToErrno(err)

@@ -22,6 +22,8 @@ func errnoToStatus(errno syscall.Errno) fuse.Status {
 
 type fileEntry struct {
 	file FileHandle
+	// Only an OPEN/CREATE that acquired a backing reference releases one.
+	backing bool
 
 	// index into Inode.openFiles
 	nodeIndex int
@@ -492,7 +494,11 @@ func (b *rawBridge) Create(cancel <-chan struct{}, input *fuse.CreateIn, name st
 	}
 	out.OpenFlags = flags
 
-	b.addBackingID(child, f, &out.OpenOut)
+	if fe != nil {
+		b.mu.Lock()
+		fe.backing = b.addBackingID(child, f, &out.OpenOut)
+		b.mu.Unlock()
+	}
 	child.setEntryOut(&out.EntryOut)
 	b.setEntryOutTimeout(&out.EntryOut)
 	return fuse.OK
@@ -767,32 +773,34 @@ func (b *rawBridge) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.O
 		fe := b.registerFile(n, f, input.Flags)
 		out.Fh = uint64(fe.fh)
 
-		b.addBackingID(n, f, out)
+		fe.backing = b.addBackingID(n, f, out)
 	}
 	return fuse.OK
 }
 
 // must hold bridge.mu
-func (b *rawBridge) addBackingID(n *Inode, f FileHandle, out *fuse.OpenOut) {
+func (b *rawBridge) addBackingID(n *Inode, f FileHandle, out *fuse.OpenOut) bool {
 	if b.disableBackingFiles {
-		return
+		return false
 	}
 
 	bc, ok := b.server.(serverBackingFdCallbacks)
 	if !ok {
 		b.disableBackingFiles = true
-		return
+		return false
 	}
 	pth, ok := f.(FilePassthroughFder)
 	if !ok {
-		return
+		return false
+	}
+	// Eligibility belongs to this handle, even if another handle already
+	// registered a backing file for the inode.
+	fd, ok := pth.PassthroughFd()
+	if !ok {
+		return false
 	}
 
 	if n.backingID == 0 {
-		fd, ok := pth.PassthroughFd()
-		if !ok {
-			return
-		}
 		m := fuse.BackingMap{
 			Fd: int32(fd),
 		}
@@ -810,7 +818,9 @@ func (b *rawBridge) addBackingID(n *Inode, f FileHandle, out *fuse.OpenOut) {
 		out.OpenFlags |= fuse.FOPEN_PASSTHROUGH
 		out.OpenFlags &= ^uint32(fuse.FOPEN_KEEP_CACHE)
 		n.backingIDRefcount++
+		return true
 	}
+	return false
 }
 
 // must hold bridge.mu
@@ -926,7 +936,9 @@ func (b *rawBridge) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.releaseBackingIDRef(n)
+	if f.backing {
+		b.releaseBackingIDRef(n)
+	}
 	b.freeFiles = append(b.freeFiles, uint32(input.Fh))
 }
 
@@ -943,7 +955,9 @@ func (b *rawBridge) ReleaseDir(input *fuse.ReleaseIn) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.releaseBackingIDRef(n)
+	if f.backing {
+		b.releaseBackingIDRef(n)
+	}
 	b.freeFiles = append(b.freeFiles, uint32(input.Fh))
 }
 

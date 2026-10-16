@@ -25,6 +25,18 @@ type countedMetadataFS struct {
 	fuse.RawFileSystem
 	lookups atomic.Int64
 	attrs   atomic.Int64
+	reads   atomic.Int64
+	plus    atomic.Int64
+}
+
+func (c *countedMetadataFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buf []byte) (fuse.ReadResult, fuse.Status) {
+	c.reads.Add(1)
+	return c.RawFileSystem.Read(cancel, in, buf)
+}
+
+func (c *countedMetadataFS) ReadDirPlus(cancel <-chan struct{}, in *fuse.ReadIn, out *fuse.DirEntryList) fuse.Status {
+	c.plus.Add(1)
+	return c.RawFileSystem.ReadDirPlus(cancel, in, out)
 }
 
 func (c *countedMetadataFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name string, out *fuse.EntryOut) fuse.Status {
@@ -59,7 +71,10 @@ func mountedMetadata(t *testing.T, glob string, files ...string) (*View, *node, 
 		t.Fatal(err)
 	}
 	root := &node{view: &v, path: "."}
-	opts := &fs.Options{EntryTimeout: new(time.Duration), AttrTimeout: new(time.Duration)}
+	opts := mountOptions()
+	// Count file caching independently of root-directory permission checks.
+	// BenchmarkOperations uses the complete production mount options.
+	opts.Options = nil
 	c, err := newMetadataCache(&v)
 	if err != nil {
 		t.Fatal(err)
@@ -179,9 +194,10 @@ func TestMetadataAttributeQueueSaturationFlushesEntries(t *testing.T) {
 	func() {
 		v.cache.mu.Lock()
 		defer v.cache.mu.Unlock()
-		// The unbuffered error delivery parks the owned worker in disable,
-		// waiting for this lock. Fill the queue without a scheduling race.
-		v.cache.watcher.Errors <- fsnotify.ErrEventOverflow
+		// Park the notification worker at its cache lock, independently of
+		// the event collector. Fill the queue without a scheduling race.
+		v.cache.flush <- struct{}{}
+		awaitMetadata(t, func() bool { return len(v.cache.flush) == 0 })
 		for range metadataAttributeLimit + 1 {
 			v.invalidateAttributes(&root.Inode)
 		}
@@ -339,7 +355,7 @@ func TestMetadataWatcherFailureDisablesCaching(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Exercise the actual watcher's error delivery and fail-closed transition.
-	v.cache.watcher.Errors <- fsnotify.ErrEventOverflow
+	v.cache.watcher.Errors <- fsnotify.ErrClosed
 	awaitMetadata(t, func() bool {
 		v.cache.mu.Lock()
 		defer v.cache.mu.Unlock()

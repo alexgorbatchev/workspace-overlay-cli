@@ -1,10 +1,10 @@
 ---
 created_on: 2026-10-12 22:42
-last_modified: 2026-10-12 22:42
+last_modified: 2026-10-15 15:37
 status: current
 ---
 
-# go-fuse source and local patch
+# go-fuse source and local patches
 
 This directory contains the complete Go module source for
 [`github.com/hanwen/go-fuse/v2` v2.11.0](https://github.com/hanwen/go-fuse/tree/423b377e1452ab7b3522229185a3047f72e3f966),
@@ -37,3 +37,27 @@ GOMAXPROCS=1 go test ./internal/overlayfs -count=10 -run 'TestPathStatWithAnothe
 ```
 
 Run this command from the workspace-overlay repository root.
+
+## Passthrough handle ownership
+
+`fs/bridge.go` checks each handle's `PassthroughFd` decision even when the inode
+already has a registered backing ID. Each file entry records whether its open
+acquired a backing reference; releasing an ordinary handle cannot decrement
+another handle's reference. CREATE acquires backing references under the same
+bridge lock used by OPEN and RELEASE.
+
+The source change is recorded in `passthrough-lifetime.patch`, applied after
+`path-getattr.patch`. `fs/passthrough_lifetime_test.go` exercises a declined
+handle alongside an existing backing registration and mixed-handle release.
+Run these tests separately from the root module:
+
+```sh
+mkdir -p .tmp
+cd third_party/go-fuse
+TMPDIR="$PWD/../../.tmp" go test -race ./fs -run 'TestPassthrough|TestReleaseWithoutPassthrough' -count=1 -v
+```
+
+The upstream mounted passthrough test requires kernel support and
+`CAP_SYS_ADMIN`; it skips when these are unavailable. The two ownership
+regressions run without those capabilities. Kernel negotiation and failed
+registration continue to fall back to ordinary FUSE I/O.

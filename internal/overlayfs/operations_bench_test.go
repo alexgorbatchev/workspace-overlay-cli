@@ -16,20 +16,16 @@ import (
 // a real mount. Setup and teardown are excluded; each sub-benchmark has its own
 // fixture so mutations cannot change another operation's workload.
 func BenchmarkOperations(b *testing.B) {
-	for _, mounted := range []bool{false, true} {
-		backend := "native"
-		if mounted {
-			backend = "fuse"
-		}
+	for _, backend := range []string{"native", "fuse", "fuse-restricted"} {
 		for _, operation := range []string{
-			"stat_project", "stat_merged", "stat_marked", "negative_lookup", "readdir",
+			"stat_project", "stat_merged", "stat_marked", "negative_lookup", "readdir", "readdir_stat",
 			"read_project", "read_merged", "read_marked", "read_large",
 			"write_project", "write_merged", "create_remove", "mkdir_remove",
 			"rename", "chmod", "truncate", "readlink", "symlink_remove", "link_remove", "statfs",
 			"read_handle", "write_handle", "stat_handle", "sync_handle", "access", "chtimes", "chown",
 		} {
 			b.Run(backend+"/"+operation, func(b *testing.B) {
-				dir := benchmarkWorkspace(b, mounted)
+				dir := benchmarkWorkspace(b, backend)
 				project := filepath.Join(dir, "project.txt")
 				merged := filepath.Join(dir, "merged.txt")
 				marked := filepath.Join(dir, "marked.md")
@@ -56,6 +52,20 @@ func BenchmarkOperations(b *testing.B) {
 				case "readdir":
 					name := filepath.Join(dir, "directory")
 					op = func() error { _, err := os.ReadDir(name); return err }
+				case "readdir_stat":
+					name := filepath.Join(dir, "directory")
+					op = func() error {
+						entries, err := os.ReadDir(name)
+						if err != nil {
+							return err
+						}
+						for _, entry := range entries {
+							if _, err := entry.Info(); err != nil {
+								return err
+							}
+						}
+						return nil
+					}
 				case "read_project", "read_merged", "read_marked", "read_large":
 					name := map[string]string{"read_project": project, "read_merged": merged, "read_marked": marked, "read_large": filepath.Join(dir, "large.txt")}[operation]
 					op = func() error { _, err := os.ReadFile(name); return err }
@@ -145,7 +155,7 @@ func BenchmarkOperations(b *testing.B) {
 	}
 }
 
-func benchmarkWorkspace(b *testing.B, mounted bool) string {
+func benchmarkWorkspace(b *testing.B, backend string) string {
 	b.Helper()
 	dir := b.TempDir()
 	project := scratch.Mkdir(b, filepath.Join(dir, "project"))
@@ -173,14 +183,18 @@ func benchmarkWorkspace(b *testing.B, mounted bool) string {
 		if i == 0 {
 			v.AddProject(root)
 		} else {
-			v.AddOverlay(root, "source", "**/*")
+			glob := "**/*"
+			if backend == "fuse-restricted" {
+				glob = "{merged.txt,marked.md}"
+			}
+			v.AddOverlay(root, "source", glob)
 		}
 	}
 	v.SetMarkers(DefaultMarkerRules())
 	if err := v.RefreshPaths(); err != nil {
 		b.Fatal(err)
 	}
-	if !mounted {
+	if backend == "native" {
 		child := &node{view: v, path: "marked.md"}
 		parts, err := v.resolve("marked.md")
 		if err != nil {

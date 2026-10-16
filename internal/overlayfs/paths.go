@@ -17,13 +17,13 @@ type pathRules struct {
 
 func gitMetadata(name string) bool { return name == ".git" || strings.HasPrefix(name, ".git/") }
 
-func (l *layer) refreshPaths() error {
+func (l *layer) refreshPaths() ([]string, error) {
 	if l.rules == nil {
-		return nil
+		return nil, nil
 	}
 	names, err := doublestar.Glob(l.root.FS(), l.rules.glob, doublestar.WithFailOnIOErrors(), doublestar.WithNoFollow())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	visible := map[string]bool{".": true}
 	for _, name := range names {
@@ -36,9 +36,24 @@ func (l *layer) refreshPaths() error {
 		}
 	}
 	l.rules.mu.Lock()
+	// Reconciliation can change contents as well as membership. Cover both
+	// snapshots, but only within the overlay's populated top-level subtrees.
+	// Project-only siblings keep their cached entries and file pages.
+	touched := make(map[string]bool)
+	for _, paths := range []map[string]bool{l.rules.visible, visible} {
+		for name := range paths {
+			if name != "." && !strings.ContainsRune(name, '/') {
+				touched[name] = true
+			}
+		}
+	}
 	l.rules.visible = visible
 	l.rules.mu.Unlock()
-	return nil
+	changed := make([]string, 0, len(touched))
+	for name := range touched {
+		changed = append(changed, name)
+	}
+	return changed, nil
 }
 
 func (l *layer) includes(name string) bool {
@@ -52,12 +67,16 @@ func (l *layer) includes(name string) bool {
 
 // RefreshPaths re-reads which overlay paths are visible and brings the Git exclusions up to date.
 func (v *View) RefreshPaths() error {
-	defer v.invalidateMetadata()
+	var changed []string
 	for i := range v.layers {
-		if err := v.layers[i].refreshPaths(); err != nil {
+		names, err := v.layers[i].refreshPaths()
+		if err != nil {
+			v.invalidateMetadata() // A partial refresh cannot identify every change.
 			return err
 		}
+		changed = append(changed, names...)
 	}
+	defer v.invalidatePaths(changed...)
 	v.excludeClean.Store(false)
 	return v.refreshExclude()
 }
@@ -79,10 +98,10 @@ func (v *View) overlays(name string) bool {
 // the given paths. A project change matters only where an overlay provides
 // the same path, because that decides whether Git must ignore it.
 func (v *View) changed(index int, names ...string) error {
-	defer v.invalidateMetadata()
 	if index > 0 {
 		return v.RefreshPaths()
 	}
+	defer v.invalidatePaths(names...)
 	if slices.ContainsFunc(names, v.overlays) {
 		v.excludeClean.Store(false)
 		return v.refreshExclude()

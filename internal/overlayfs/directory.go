@@ -1,6 +1,7 @@
 package overlayfs
 
 import (
+	"context"
 	"os"
 	"path"
 	"syscall"
@@ -11,6 +12,13 @@ import (
 
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/logged"
 )
+
+// NewListDirStream implements go-fuse's directory-handle interfaces, including
+// seek and release. Return it directly instead of the bridge's lazy adapter.
+func (n *node) OpendirHandle(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+	stream, errno := n.Readdir(ctx)
+	return stream, 0, errno
+}
 
 // directoryEntries uses native getdents types. Root.FS().ReadDir eagerly stats
 // every entry to make DirEntry.Info safe after a mount hides the source path;
@@ -24,6 +32,7 @@ func (v *View) directoryEntries(name string) ([]fuse.DirEntry, error) {
 		return nil, syscall.ENOTDIR
 	}
 	entries := make(map[string]fuse.DirEntry)
+	var result []fuse.DirEntry
 	for _, part := range parts {
 		layer := &v.layers[part.index]
 		file, err := layer.root.OpenFile(name, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NONBLOCK, 0)
@@ -58,11 +67,18 @@ func (v *View) directoryEntries(name string) ([]fuse.DirEntry, error) {
 				}
 			}
 			entry.Ino, entry.Off = 0, 0 // Lookup supplies the view's inode identity.
-			entries[entry.Name] = entry
+			if len(parts) == 1 {
+				result = append(result, entry)
+			} else {
+				entries[entry.Name] = entry
+			}
 		}
 		stream.Close()
 	}
-	result := make([]fuse.DirEntry, 0, len(entries))
+	if len(parts) == 1 {
+		return result, nil
+	}
+	result = make([]fuse.DirEntry, 0, len(entries))
 	for _, entry := range entries {
 		result = append(result, entry)
 	}

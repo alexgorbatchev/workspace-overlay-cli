@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"sort"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -17,8 +18,10 @@ import (
 
 type node struct {
 	fs.Inode
-	view *View
-	path string
+	view       *View
+	path       string
+	version    nativeVersion // protected by view.mu
+	dataCached atomic.Bool
 }
 
 func (n *node) relativePath() string {
@@ -190,8 +193,10 @@ func (n *node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 		if err != nil {
 			return nil, 0, fs.ToErrno(err)
 		}
-		return fs.NewLoopbackFileFromOS(f), 0, 0
+		h, openFlags := n.nativeOpen(f, index, name, flags)
+		return h, openFlags, 0
 	}
+	n.version = nativeVersion{}
 	return n.openMerged(ctx, flags, parts)
 }
 

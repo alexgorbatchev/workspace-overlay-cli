@@ -65,4 +65,4 @@ Temporarily add uniquely marked blocks to Git `info/exclude` for selected overla
 
 From a configured workspace, run `workspace-overlay overlay mount`, inspect it with `workspace-overlay overlay status`, and stop it with `workspace-overlay overlay unmount`. Supply `--project alpha` to select that configured project.
 
-For isolated verification from the CLI checkout, `just dev`, `just status`, and `just stop` invoke those commands. `just dev` creates or reuses `dev-workspace` and mounts all configured projects and worktrees; optional `--project alpha` narrows the selection. Run `just test-local` to run end-to-end tests against `dev-workspace`. Edits remain in `dev-workspace` after stopping.
+For isolated verification from the CLI checkout, `just run`, `just status`, and `just stop` invoke those commands. `just run` creates or reuses `dev-workspace` and mounts all configured projects and worktrees; optional `--project alpha` narrows the selection. Run `just test-local` to run end-to-end tests against `dev-workspace`. Edits remain in `dev-workspace` after stopping.

@@ -5,7 +5,7 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 ## Commands
 - Build: `just build` (writes `bin/workspace-overlay` with source paths removed)
 - Dev bootstrap: `just dev-bootstrap` (builds and installs local development binary into the dotfiles shim payload)
-- Dev: `just dev [--project name]` (shared fixtures in `dev-workspace`, all projects and worktrees by default)
+- Dev: `just run [--project name]` (shared fixtures in `dev-workspace`, all projects and worktrees by default)
 - Stop: `just stop [--project name]`
 - Status: `just status [--project name]`
 - Test: `just test` (runs every package with `AGENT=0` and `AGENT=1`, each with the race detector and 90% coverage gate; always runs fresh, because a result replayed from the test cache carries coverage blocks of sources that have since changed); `go test -race -cover ./...` runs the tests without the gate. Mode-specific tests select `AGENT` explicitly instead of inheriting the invoking shell's mode.
@@ -14,7 +14,7 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - Lint: `just lint` (`go mod tidy -diff`, `go vet ./...`, and `golangci-lint run ./...`; CI pins golangci-lint 2.11.4)
 - CI: `.github/workflows/ci.yml` runs on pushes and pull requests to `main`: `go mod tidy -diff`, build, vet, `go test -race ./...`, and golangci-lint.
 - Release: push an annotated `vX.Y.Z` tag. `.github/workflows/release.yml` repeats the CI checks and then publishes Linux amd64 and arm64 archives through GoReleaser (`.goreleaser.yml`), which sets `main.version` to the tag’s version. Check a configuration change with `goreleaser check` and `goreleaser release --snapshot --clean`, and update the download URL in the README’s `# Installation` for the new version.
-- Run: `go run ./cmd/workspace-overlay <args>` or `just run <args>`
+- Run: `go run ./cmd/workspace-overlay <args>` or `just cli <args>`
 - Run AI: `AGENT=1 go run ./cmd/workspace-overlay <args>` or `just run-ai <args>`
 
 ## Setup
@@ -78,13 +78,13 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 - Caller-identity tests lock their goroutine to its OS thread and change `/proc/thread-self/comm`: FUSE identifies the calling thread, so changing only the process leader's name does not identify requests from another thread. Keep earlier callers' handles open to exercise path stats alongside descriptor stats.
 
 ## Live verification
-- Run `just dev` to create or reuse `dev-workspace` and mount `alpha`, `beta`, and `.workspaces/one/{alpha,beta}` within that workspace. Use `just status` and `just stop` from another terminal. Optional `--project alpha` selects one project.
+- Run `just run` to create or reuse `dev-workspace` and mount `alpha`, `beta`, and `.workspaces/one/{alpha,beta}` within that workspace. Use `just status` and `just stop` from another terminal. Optional `--project alpha` selects one project.
 - Integration tests use `fixture.Create` and the embedded `internal/fixture/testdata/workspace/` data, including the shipped example configuration. Fixture Git commands disable hooks and signing and exclude inherited `GIT_*` overrides.
 - Append to `dev-workspace/alpha/AGENTS.md`; verify the final contribution in `dev-workspace/.ai/alpha/AGENTS.md` and a fresh read from `dev-workspace/.workspaces/one/alpha/AGENTS.md`. Nested colliding notes are at `docs/nested/notes.md`; shared and project skills appear in `.agents/skills/`.
 - Add another worktree while mounted with `git -C dev-workspace/alpha worktree add -b live-check ../.workspaces/two/alpha main`; `just status` should include it after watcher reconciliation. Stop overlays before `git worktree remove`.
 - Verification workspace files are ignored under `dev-workspace/`. Stop removes managed exclusions and mounts; retain fixture edits and Git history for subsequent starts. Failed initialization retains an incomplete directory and refuses reuse rather than overwriting it.
 - Run `just test-local` to run automated end-to-end integration tests exercising real mounts, Git status, two-way writes, and unmount against `dev-workspace`.
-- For a real workspace use `just run overlay mount --config path/to/workspace-overlay.toml` instead of the fixture recipes.
+- For a real workspace use `just cli overlay mount --config path/to/workspace-overlay.toml` instead of the fixture recipes.
 
 ## Boundaries
 - Always: use meaningful red/green tests for executable behavior changes. Check sensitivity with implementation disabled and tests enabled in an owned isolated or disposable worktree, verify the expected failure, restore the final implementation, and rerun relevant checks. Preserve other actors' changes. For non-executable changes, run applicable validators rather than manufacturing static-value tests.

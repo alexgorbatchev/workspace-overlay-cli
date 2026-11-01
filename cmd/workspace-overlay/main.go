@@ -10,7 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	helptree "github.com/alexgorbatchev/cobra-help-tree/v2"
+	helptree "github.com/alexgorbatchev/cobra-help-tree/v4"
 	"github.com/spf13/cobra"
 
 	"github.com/alexgorbatchev/workspace-overlay-cli/internal/config"

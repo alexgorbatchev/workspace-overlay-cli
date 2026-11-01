@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	helptree "github.com/alexgorbatchev/cobra-help-tree/v2"
+	helptree "github.com/alexgorbatchev/cobra-help-tree/v4"
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
 	"golang.org/x/term"

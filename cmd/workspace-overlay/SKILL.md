@@ -4,7 +4,7 @@ description: Use when mounting, inspecting, or stopping workspace-overlay and ed
 author: alexgorbatchev
 metadata:
   created_on: 2026-10-06 16:00
-  last_modified: 2026-10-16 21:24
+  last_modified: 2026-11-05 08:06
   status: current
 ---
 
@@ -65,4 +65,4 @@ Temporarily add uniquely marked blocks to Git `info/exclude` for selected overla
 
 From a configured workspace, run `workspace-overlay overlay mount`, inspect it with `workspace-overlay overlay status`, and stop it with `workspace-overlay overlay unmount`. Supply `--project alpha` to select that configured project.
 
-For isolated verification from the CLI checkout, `just run`, `just status`, and `just stop` invoke those commands. `just run` creates or reuses `dev-workspace` and mounts all configured projects and worktrees; optional `--project alpha` narrows the selection. Run `just test-local` to run end-to-end tests against `dev-workspace`. Edits remain in `dev-workspace` after stopping.
+For isolated verification from the CLI checkout, `just run`, `just status`, and `just stop` invoke those commands. `just run` creates or reuses `dev-workspace` and mounts all configured projects and worktrees; optional `--project alpha` narrows the selection. Run `just test-local` to run end-to-end tests in a fresh temporary fixture, removed after its mount owner exits and its mounts are released. The tests leave the interactive `dev-workspace` untouched. Edits remain in `dev-workspace` after stopping `just run`.

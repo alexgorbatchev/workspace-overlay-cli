@@ -63,66 +63,39 @@ func selfReadable(target string) error {
 }
 
 func TestE2ELocalWorkspace(t *testing.T) {
-	// Locate dev-workspace directory relative to the repository root
-	workspaceDir, err := filepath.Abs(filepath.Join("..", "..", "dev-workspace"))
+	// A reused interactive fixture may contain edits and unrelated branches.
+	// Own a fresh tree instead of trying to reconstruct its previous state.
+	root, err := os.MkdirTemp(os.TempDir(), "e2e-workspace-")
 	if err != nil {
 		t.Fatal(err)
 	}
+	workspaceDir := filepath.Join(root, "workspace")
 	configFile := filepath.Join(workspaceDir, config.Name)
-
-	// Ensure the fixture workspace exists
+	var owner *e2eOwner
+	t.Cleanup(func() {
+		if owner != nil {
+			if !owner.joined {
+				t.Errorf("preserving %s because its mount owner has not exited", root)
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), e2eGrace)
+			defer cancel()
+			var output bytes.Buffer
+			if err := runContext(ctx, []string{"overlay", "unmount", "--config", configFile}, &output, &output); err != nil {
+				t.Errorf("preserving %s: unmount the fixture: %v: %s", root, err, output.String())
+				return
+			}
+		}
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("remove the test fixture: %v", err)
+		}
+	})
 	if _, err := fixture.Create(t.Context(), workspaceDir); err != nil {
 		t.Fatalf("fixture.Create failed: %v", err)
 	}
-
 	alphaDir := filepath.Join(workspaceDir, "alpha")
 	betaDir := filepath.Join(workspaceDir, "beta")
 	workspaceOverlayFile := filepath.Join(workspaceDir, ".ai", "workspace", "AGENTS.md")
-
-	// Save original overlay source file content to restore on cleanup
-	origWorkspaceOverlay := scratch.Read(t, workspaceOverlayFile)
-
-	// The fixture is reused across runs and keeps what its user changes, so
-	// the commit and the branch this test adds to it are taken out again.
-	head, err := gitrepo.Command(t.Context(), alphaDir, "rev-parse", "HEAD").Output()
-	if err != nil {
-		t.Fatalf("read the fixture's commit: %v", err)
-	}
-	startCommit := strings.TrimSpace(string(head))
-	var branchName string
-	var owner *e2eOwner
-
-	// Setup cleanup to unmount and reset git state after test
-	t.Cleanup(func() {
-		if owner != nil && !owner.joined {
-			t.Error("preserving the fixture because its mount owner has not exited")
-			return
-		}
-		// Stop any lingering mounts
-		ctx, cancel := context.WithTimeout(context.Background(), e2eGrace)
-		defer cancel()
-		var stopOut, stopErr bytes.Buffer
-		if err := runContext(ctx, []string{"overlay", "unmount", "--config", configFile}, &stopOut, &stopErr); err != nil {
-			t.Errorf("unmount the fixture: %v: %s", err, stopErr.String())
-			return
-		}
-		scratch.Write(t, workspaceOverlayFile, string(origWorkspaceOverlay))
-		// A restore that fails leaves the fixture changed for the next run.
-		restore := func(dir string, args ...string) {
-			if out, err := gitrepo.Command(context.Background(), dir, args...).CombinedOutput(); err != nil {
-				t.Errorf("restore the fixture: git %s in %s: %v: %s", strings.Join(args, " "), dir, err, out)
-			}
-		}
-		restore(alphaDir, "checkout", "--force", "main")
-		restore(alphaDir, "reset", "--hard", startCommit)
-		if branchName != "" {
-			restore(alphaDir, "branch", "-D", branchName)
-		}
-		restore(alphaDir, "clean", "-fd")
-		restore(betaDir, "checkout", "--force", "main")
-		restore(betaDir, "reset", "--hard", "HEAD")
-		restore(betaDir, "clean", "-fd")
-	})
 
 	// 1. Mount overlay
 	owner = startE2EOwner(t, configFile)
@@ -184,7 +157,7 @@ func TestE2ELocalWorkspace(t *testing.T) {
 	if out, err := gitrepo.Command(t.Context(), alphaDir, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "-am", "e2e: update project rules").CombinedOutput(); err != nil {
 		t.Fatalf("git commit failed: %v: %s", err, out)
 	}
-	branchName = fmt.Sprintf("e2e-branch-%d", time.Now().UnixNano())
+	branchName := fmt.Sprintf("e2e-branch-%d", time.Now().UnixNano())
 	if out, err := gitrepo.Command(t.Context(), alphaDir, "checkout", "-b", branchName).CombinedOutput(); err != nil {
 		t.Fatalf("git checkout -b failed: %v: %s", err, out)
 	}

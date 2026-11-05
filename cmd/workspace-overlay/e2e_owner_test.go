@@ -21,7 +21,7 @@ const (
 )
 
 // A separate process can be killed if graceful FUSE shutdown does not finish.
-// Never restore the reused fixture until Wait has joined that process.
+// Never remove its fixture until Wait has joined that process.
 type e2eOwner struct {
 	cmd     *exec.Cmd
 	cancel  context.CancelFunc

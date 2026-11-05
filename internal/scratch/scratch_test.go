@@ -69,8 +69,13 @@ func TestMainSetsEnvironment(t *testing.T) {
 	if tmpdir == "" {
 		t.Fatal("TMPDIR not set")
 	}
-	if !strings.HasSuffix(tmpdir, "/.tmp") {
-		t.Errorf("TMPDIR should end with /.tmp, got: %s", tmpdir)
+	root, err := findModuleRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(filepath.Join(root, ".tmp"), tmpdir)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		t.Fatalf("TMPDIR escaped the checkout scratch: %s, %v", tmpdir, err)
 	}
 	state := os.Getenv("XDG_STATE_HOME")
 	if filepath.Dir(state) != tmpdir || !strings.HasPrefix(filepath.Base(state), "state-") {
@@ -136,5 +141,22 @@ func TestChildProcessSharesStateDirectory(t *testing.T) {
 	}
 	if got := string(Read(t, filepath.Join(own, "leftover"))); got != "state" {
 		t.Fatalf("state written by the child = %q, want it kept for the parent", got)
+	}
+}
+
+func TestStateDirectoryUsesRecipeScratch(t *testing.T) {
+	runDir := t.TempDir()
+	var env []string
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "TMPDIR=") && !strings.HasPrefix(entry, "XDG_STATE_HOME=") {
+			env = append(env, entry)
+		}
+	}
+	state := childStateHome(t, append(env, "TMPDIR="+runDir))
+	if filepath.Dir(state) != runDir {
+		t.Fatalf("state escaped the recipe's scratch: %s", state)
+	}
+	if entries, err := os.ReadDir(runDir); err != nil || len(entries) != 0 {
+		t.Fatalf("recipe scratch contains leftovers: %v, %v", entries, err)
 	}
 }

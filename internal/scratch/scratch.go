@@ -91,6 +91,13 @@ func isolate() (cleanup func() error, err error) {
 		return nil, err
 	}
 	dir := filepath.Join(moduleRoot, ".tmp")
+	// A recipe owns this subtree and can remove it even if a test is killed.
+	// Direct go test invocations still keep their scratch inside the checkout.
+	if inherited := os.Getenv("TMPDIR"); inherited != "" {
+		if relative, err := filepath.Rel(dir, inherited); err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			dir = inherited
+		}
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}

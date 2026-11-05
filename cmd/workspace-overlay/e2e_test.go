@@ -90,13 +90,21 @@ func TestE2ELocalWorkspace(t *testing.T) {
 	}
 	startCommit := strings.TrimSpace(string(head))
 	var branchName string
+	var owner *e2eOwner
 
 	// Setup cleanup to unmount and reset git state after test
 	t.Cleanup(func() {
+		if owner != nil && !owner.joined {
+			t.Error("preserving the fixture because its mount owner has not exited")
+			return
+		}
 		// Stop any lingering mounts
+		ctx, cancel := context.WithTimeout(context.Background(), e2eGrace)
+		defer cancel()
 		var stopOut, stopErr bytes.Buffer
-		if err := runContext(context.Background(), []string{"overlay", "unmount", "--config", configFile}, &stopOut, &stopErr); err != nil {
+		if err := runContext(ctx, []string{"overlay", "unmount", "--config", configFile}, &stopOut, &stopErr); err != nil {
 			t.Errorf("unmount the fixture: %v: %s", err, stopErr.String())
+			return
 		}
 		scratch.Write(t, workspaceOverlayFile, string(origWorkspaceOverlay))
 		// A restore that fails leaves the fixture changed for the next run.
@@ -117,20 +125,7 @@ func TestE2ELocalWorkspace(t *testing.T) {
 	})
 
 	// 1. Mount overlay
-	mountCtx, cancelMount := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	var mountOut, mountErr bytes.Buffer
-	go func() {
-		done <- runContext(mountCtx, []string{"overlay", "mount", "--config", configFile, "--replace"}, &mountOut, &mountErr)
-	}()
-
-	t.Cleanup(func() {
-		cancelMount()
-		select {
-		case <-done:
-		default:
-		}
-	})
+	owner = startE2EOwner(t, configFile)
 
 	waitForMount(t, alphaDir, true)
 	waitForMount(t, betaDir, true)
@@ -240,13 +235,8 @@ func TestE2ELocalWorkspace(t *testing.T) {
 	if err := runContext(t.Context(), []string{"overlay", "unmount", "--config", configFile}, &unmountOut, &unmountErr); err != nil {
 		t.Fatalf("unmount failed: %v: %s", err, unmountErr.String())
 	}
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Errorf("mount returned error on exit: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("mount did not exit after unmount")
+	if err := owner.finish(t); err != nil {
+		t.Errorf("mount returned error on exit: %v: %s", err, owner.output.String())
 	}
 
 	waitForMount(t, alphaDir, false)

@@ -1,0 +1,102 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { devBootstrap } from "./devBootstrap";
+
+let directoryPath: string;
+let dotfilesPath: string;
+let binaryPath: string;
+let sourcePath: string;
+let developmentPath: string;
+let previousPath: string | undefined;
+
+beforeEach(async () => {
+  const temporaryRootPath = resolve(import.meta.dir, "..", ".tmp");
+  await mkdir(temporaryRootPath, { recursive: true });
+  directoryPath = await mkdtemp(join(temporaryRootPath, "dev-bootstrap-"));
+  dotfilesPath = join(directoryPath, "dotfiles with spaces");
+  binaryPath = join(dotfilesPath, ".generated/binaries/workspace-overlay/v1/workspace-overlay");
+  developmentPath = join(dotfilesPath, ".state/custom-dev-tools/workspace-overlay");
+  sourcePath = join(directoryPath, "build with spaces/workspace-overlay");
+  await Bun.write(binaryPath, "managed release");
+  await Bun.write(sourcePath, "#!/bin/sh\nprintf '999.0.0-dev.test\\n'\n");
+  await chmod(sourcePath, 0o755);
+  await Bun.write(join(dotfilesPath, ".generated/bin/workspace-overlay"), `TOOL_EXECUTABLE="${binaryPath}"\n`);
+  const cliPath = join(directoryPath, "commands/dotfiles");
+  await Bun.write(cliPath, `#!${process.execPath}
+const args = process.argv.slice(2);
+const root = process.cwd();
+if (args.includes("--help")) {
+  console.log(await Bun.file(root + "/help").text());
+  process.exit(0);
+}
+if (args[0] === "tool" && args[1] === "dev" && args[2] === "use") {
+  if (await Bun.file(root + "/fail-use").exists()) {
+    console.error("registration refused");
+    process.exit(1);
+  }
+  await Bun.write(root + "/invocation.json", JSON.stringify({ args, cwd: root }));
+  const source = args[args.indexOf("--bin") + 1].slice("workspace-overlay=".length);
+  await Bun.write(root + "/.state/custom-dev-tools/workspace-overlay", Bun.file(source));
+} else if (args[0] === "tool" && args[1] === "which" && args.includes("--bin")) {
+  console.log(root + "/.state/custom-dev-tools/workspace-overlay");
+} else {
+  console.error("unexpected command");
+  process.exit(1);
+}
+`);
+  await chmod(cliPath, 0o755);
+  await Bun.write(join(dotfilesPath, "help"), "Usage: tool dev use <tool> --bin name=source");
+  previousPath = process.env.PATH;
+  process.env.PATH = join(directoryPath, "commands") + ":" + (previousPath ?? "");
+});
+
+afterEach(async () => {
+  if (previousPath === undefined) {
+    delete process.env.PATH;
+  } else {
+    process.env.PATH = previousPath;
+  }
+  await rm(directoryPath, { recursive: true, force: true });
+});
+
+describe("devBootstrap", () => {
+  it("registers the build and resolves its configured development path without overwriting the release", async () => {
+    expect(await devBootstrap(sourcePath, dotfilesPath)).toBe(developmentPath);
+    expect(await Bun.file(binaryPath).text()).toBe("managed release");
+    expect(await Bun.file(developmentPath).text()).toBe(await Bun.file(sourcePath).text());
+    const invocation = await Bun.file(join(dotfilesPath, "invocation.json")).json();
+    expect(invocation.cwd).toBe(dotfilesPath);
+    expect(invocation.args).toEqual([
+      "tool", "dev", "use", "workspace-overlay", "--bin", "workspace-overlay=" + sourcePath,
+      "--source-repo", resolve(import.meta.dir, ".."), "--version", "999.0.0-dev.test",
+    ]);
+  });
+
+  it("works before any release payload or shim exists", async () => {
+    await rm(join(dotfilesPath, ".generated"), { recursive: true });
+    expect(await devBootstrap(sourcePath, dotfilesPath)).toBe(developmentPath);
+    expect(await Bun.file(developmentPath).exists()).toBe(true);
+  });
+
+  it("requires a dotfiles CLI with development override support", async () => {
+    await Bun.write(join(dotfilesPath, "help"), "Usage: tool");
+    await expect(devBootstrap(sourcePath, dotfilesPath)).rejects.toThrow("Update dotfiles");
+    expect(await Bun.file(binaryPath).text()).toBe("managed release");
+    expect(await Bun.file(join(dotfilesPath, "invocation.json")).exists()).toBe(false);
+  });
+
+  it("reports failed registration without falling back to replacing the release", async () => {
+    await Bun.write(join(dotfilesPath, "fail-use"), "");
+    await expect(devBootstrap(sourcePath, dotfilesPath)).rejects.toThrow("registration refused");
+    expect(await Bun.file(binaryPath).text()).toBe("managed release");
+    expect(await Bun.file(developmentPath).exists()).toBe(false);
+  });
+
+  it("rejects missing and empty build output before registration", async () => {
+    await expect(devBootstrap(join(directoryPath, "missing"), dotfilesPath)).rejects.toThrow();
+    await Bun.write(sourcePath, "");
+    await expect(devBootstrap(sourcePath, dotfilesPath)).rejects.toThrow("Build output is empty");
+    expect(await Bun.file(join(dotfilesPath, "invocation.json")).exists()).toBe(false);
+  });
+});

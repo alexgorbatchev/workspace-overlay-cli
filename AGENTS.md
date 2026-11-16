@@ -4,7 +4,8 @@ Go FUSE CLI tool that serves layered workspace overlays over project backing dir
 
 ## Commands
 - Build: `just build` (writes `bin/workspace-overlay` with source paths removed)
-- Dev bootstrap: `just dev-bootstrap` (builds and installs local development binary into the dotfiles shim payload)
+- Dev bootstrap: `just dev-bootstrap` (builds and registers a protected local development binary through `dotfiles tool dev use`; optional argument selects the dotfiles project). Requires a dotfiles CLI with development override support. Use `dotfiles tool dev off workspace-overlay` in that project to resume managed releases.
+- Bootstrap script tests: `just test-bootstrap` (Bun process-boundary checks; release payloads remain unchanged).
 - Dev: `just run [--project name]` (shared fixtures in `dev-workspace`, all projects and worktrees by default)
 - Stop: `just stop [--project name]`
 - Status: `just status [--project name]`

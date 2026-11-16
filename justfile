@@ -1,7 +1,7 @@
 build:
     go build -trimpath -o bin/workspace-overlay ./cmd/workspace-overlay
 
-# Build and replace the workspace-overlay payload used by the dotfiles shim
+# Build and register a protected workspace-overlay development override
 dev-bootstrap $dotfiles_dir=(env_var("HOME") / ".dotfiles"):
     revision="$(git rev-parse --short HEAD 2>/dev/null || echo dev)" && go build -trimpath -ldflags="-X main.version=999.0.0-dev.$revision" -o bin/workspace-overlay ./cmd/workspace-overlay
     bun run ./scripts/devBootstrap.ts
@@ -24,6 +24,9 @@ cli *args:
 
 run-ai *args:
     AGENT=1 go run ./cmd/workspace-overlay {{ args }}
+
+test-bootstrap:
+    bun test ./scripts/devBootstrap.test.ts
 
 test: (test-mode "0") (test-mode "1")
 

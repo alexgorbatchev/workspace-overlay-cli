@@ -75,9 +75,18 @@ func showHolders(out io.Writer, screen *os.File, target string, holders []holder
 	table := tablewriter.NewTable(out, options...)
 	table.Header("PID", "Command", "Directory")
 	for _, p := range holders {
-		if err := table.Append(strconv.Itoa(p.PID), p.Command, pathname.Display(p.Dir)); err != nil {
+		if err := table.Append(strconv.Itoa(p.PID), holderCell(p.Command), holderCell(pathname.Display(p.Dir))); err != nil {
 			return err
 		}
 	}
 	return table.Render()
+}
+
+func holderCell(text string) string {
+	const maxLines = 5
+	lines := strings.SplitN(text, "\n", maxLines+1)
+	if len(lines) <= maxLines {
+		return text
+	}
+	return strings.Join(lines[:maxLines], "\n") + "…"
 }

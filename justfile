@@ -3,7 +3,7 @@ build:
 
 # Build and register a protected workspace-overlay development override
 dev-bootstrap $dotfiles_dir=(env_var("HOME") / ".dotfiles"):
-    revision="$(git rev-parse --short HEAD 2>/dev/null || echo dev)" && go build -trimpath -ldflags="-X main.version=999.0.0-dev.$revision" -o bin/workspace-overlay ./cmd/workspace-overlay
+    base="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || echo v0.0.0)" && revision="$(git rev-parse --short HEAD 2>/dev/null || echo dev)" && go build -trimpath -ldflags="-X main.version=999.0.0-dev--${base#v}+$revision" -o bin/workspace-overlay ./cmd/workspace-overlay
     bun run ./scripts/devBootstrap.ts
 
 run *args:
